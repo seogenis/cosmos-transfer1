@@ -20,7 +20,7 @@ import attrs
 from cosmos_transfer1.diffusion.config.transfer.model import CtrlModelConfig
 from cosmos_transfer1.checkpointer.ema_fsdp_checkpointer import CheckpointConfig
 from cosmos_transfer1.diffusion.config.training.registry_extra import register_configs
-from cosmos_transfer1.diffusion.model.model_ctrl import VideoDiffusionModelWithCtrl
+from cosmos_transfer1.diffusion.training.models.model_ctrl import VideoDiffusionModelWithCtrl
 from cosmos_transfer1.utils import config
 from cosmos_transfer1.utils.config_helper import import_all_modules_from_package
 from cosmos_transfer1.utils.lazy_config import PLACEHOLDER

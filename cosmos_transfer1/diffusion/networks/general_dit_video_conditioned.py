@@ -191,7 +191,8 @@ class VideoExtendGeneralDIT(GeneralDIT):
         if self.add_augment_sigma_embedding:
             if condition_video_augment_sigma is None:
                 # Handling image case
-                # Note: for video case, when there is not condition frames, we also set it as zero, see DiffusionV2WModel augment_conditional_latent_frames function
+                # Note: for video case, when there is not condition frames, we also set it as zero, see 
+                # the augment_conditional_latent_frames function in DiffusionV2WModel and ExtendDiffusionModel.
                 assert data_type == DataType.IMAGE, "condition_video_augment_sigma is required for video data type"
                 condition_video_augment_sigma = torch.zeros_like(timesteps.flatten())
 

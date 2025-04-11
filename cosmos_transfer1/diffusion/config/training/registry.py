@@ -28,6 +28,7 @@ from cosmos_transfer1.diffusion.config.training.checkpoint import (
     FSDP_CHECKPOINTER,
     MULTI_RANK_CHECKPOINTER,
     MODEL_PARALLEL_CHECKPOINTER,
+    FAST_TP_CHECKPOINTER,
 )
 
 
@@ -59,13 +60,9 @@ def register_checkpoint_credential(cs):
 def register_checkpointer(cs):
     cs.store(group="ckpt_klass", package="checkpoint.type", name="fsdp", node=FSDP_CHECKPOINTER)
     cs.store(group="ckpt_klass", package="checkpoint.type", name="multi_rank", node=MULTI_RANK_CHECKPOINTER)
-    cs.store(
-        group="ckpt_klass",
-        package="checkpoint.type",
-        name="tp",
-        node=MODEL_PARALLEL_CHECKPOINTER,
-    )
-
+    cs.store(group="ckpt_klass", package="checkpoint.type", name="tp", node=MODEL_PARALLEL_CHECKPOINTER)
+    cs.store(group="ckpt_klass", package="checkpoint.type", name="fast_tp", node=FAST_TP_CHECKPOINTER)
+    
 
 def register_configs():
     cs = ConfigStore.instance()

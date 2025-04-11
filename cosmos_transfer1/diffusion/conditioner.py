@@ -116,6 +116,7 @@ class BaseVideoCondition:
     num_frames: Optional[torch.Tensor] = None
     image_size: Optional[torch.Tensor] = None
     scalar_feature: Optional[torch.Tensor] = None
+    frame_repeat: Optional[torch.Tensor] = None
 
     def to_dict(self) -> Dict[str, Optional[torch.Tensor]]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -351,4 +352,6 @@ class VideoConditionerWithCtrl(VideoExtendConditioner):
         output["hint_key"] = batch["hint_key"]
         if "control_weight" in batch:
             output["control_weight"] = batch["control_weight"]
+        if "num_layers_to_use" in batch:
+            output["num_layers_to_use"] = batch["num_layers_to_use"]
         return BaseWithCtrlCondition(**output)

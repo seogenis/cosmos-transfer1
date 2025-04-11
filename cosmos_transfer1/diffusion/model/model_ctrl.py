@@ -495,7 +495,7 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
                     if getattr(uncondition, hint_key) is not None:
                         setattr(uncondition, hint_key, latent_hint[idx : idx + 1])
 
-                    if self.is_image_batch(data_batch) or not issubclass(base_class, ExtendVideoDiffusionModel):
+                    if self.is_image_batch(data_batch):
                         cond_x0 = self.denoise(noise_x, sigma, condition).x0
                         uncond_x0 = self.denoise(noise_x, sigma, uncondition).x0
                     else:

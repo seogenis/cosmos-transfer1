@@ -29,7 +29,7 @@ from cosmos_transfer1.utils.lazy_config import LazyCall as L
 from cosmos_transfer1.utils.lazy_config import LazyDict
 from cosmos_transfer1.diffusion.config.transfer.blurs import random_blur_config
 from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS_COMB
-from cosmos_transfer1.diffusion.model.model_ctrl import VideoDiffusionModelWithCtrl
+from cosmos_transfer1.diffusion.training.models.model_ctrl import VideoDiffusionModelWithCtrl  # this one has training support
 from cosmos_transfer1.diffusion.networks.general_dit_video_conditioned import VideoExtendGeneralDIT
 
 cs = ConfigStore.instance()
@@ -65,7 +65,7 @@ def make_ctrlnet_config_7b_training(
                 {"override /hint_key": hint_key},
                 {"override /callbacks": "basic"},
                 {"override /checkpoint": "local"},
-                {"override /ckpt_klass": "multi_rank"},
+                {"override /ckpt_klass": "fast_tp"},
                 #
                 {"override /data_train": data_train},
                 {"override /data_val": data_val},

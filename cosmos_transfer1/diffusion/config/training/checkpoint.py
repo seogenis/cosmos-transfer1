@@ -20,8 +20,9 @@ from cosmos_transfer1.utils.lazy_config import LazyCall as L
 from cosmos_transfer1.checkpointer.fsdp_checkpointer import FSDPCheckpointer
 from cosmos_transfer1.checkpointer.multi_rank_checkpointer import MultiRankCheckpointer
 from cosmos_transfer1.checkpointer.tp_checkpointer import Checkpointer as TPCheckpointer
-
+from cosmos_transfer1.checkpointer.fast_tp import Checkpointer as FastTPCheckpointer
 
 MULTI_RANK_CHECKPOINTER: Dict[str, str] = L(MultiRankCheckpointer)()
 FSDP_CHECKPOINTER: Dict[str, str] = L(FSDPCheckpointer)()
 MODEL_PARALLEL_CHECKPOINTER: Dict[str, str] = L(TPCheckpointer)()
+FAST_TP_CHECKPOINTER: Dict[str, str] = L(FastTPCheckpointer)()      
