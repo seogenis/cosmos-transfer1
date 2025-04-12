@@ -25,6 +25,9 @@ from cosmos_transfer1.diffusion.config.transfer.net_ctrl import FADITV2EncoderCo
 
 
 def register_experiment_ctrlnet(cs):
+    # TODO: maybe we should change the 'name' here; it's the dit-encoder for net_ctrl
+    # but current naming is the same as for the main 'net' group (which corresponds to the full DiT)
+    # that's defined in cosmos_transfer1/diffusion/config/registry.py. Isn't an error but could be confusing.
     cs.store(group="net_ctrl", package="model.net_ctrl", name="faditv2_7b", node=FADITV2EncoderConfig)
 
     cs.store(group="conditioner", package="model.conditioner", name="ctrlnet", node=BaseVideoConditionerWithCtrlConfig)

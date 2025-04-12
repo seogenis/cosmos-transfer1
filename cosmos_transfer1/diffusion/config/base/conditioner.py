@@ -74,6 +74,11 @@ class ReMapkey(BaseConditionEntry):
             element = element.to(dtype=self.dtype)
         return {key: element}
 
+    def details(self) -> str:
+        key = self.output_key if self.output_key else self.input_key
+        return f"Output key: {key} \n\tDtype: {self.dtype}"
+
+
 
 @attrs.define(slots=False)
 class FPSConfig:

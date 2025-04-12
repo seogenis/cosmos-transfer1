@@ -340,6 +340,7 @@ class BaseWithCtrlCondition(VideoExtendCondition):
     base_model: Optional[torch.nn.Module] = None
     hint_key: Optional[str] = None
     control_weight: Optional[float] = 1.0
+    num_layers_to_use: Optional[int] = -1
 
 
 class VideoConditionerWithCtrl(VideoExtendConditioner):

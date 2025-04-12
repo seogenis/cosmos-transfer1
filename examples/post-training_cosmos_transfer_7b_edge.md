@@ -145,12 +145,14 @@ Training a VisControl or EdgeControl model is self-supervised: we apply blurs an
 
 #### 3. Post-train the Model
 
-Run the following command to execute an example post-training job with the above data.
+Run the following command to execute an example post-training job with the above data. The command below will output the detailed experiment config file at
+`checkpoints/cosmos_transfer1_posttrain/CTRL_7Bv1_lvg/CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3/config.yaml`.
 ```bash
 export OUTPUT_ROOT=checkpoints # default value
-torchrun --nproc_per_node=8 -m cosmos_transfer1.diffusion.training.train --config=cosmos_transfer1/diffusion/training/config/config.py --experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3
+torchrun --nproc_per_node=1 -m cosmos_transfer1.diffusion.training.train --dryrun --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3
 ```
 
+Removing the `--dryrun` will start a real training job.
 checkpoints/cosmos_transfer1/CTRL_7Bv1_lvg/CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3/config.yaml
 This command will use ``cosmos_transfer1/diffusion/config/training/experiment/ctrl_7b_tp_121frames.py` to register experiments for all `hint_keys` (control modalities).
 

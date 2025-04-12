@@ -16,7 +16,7 @@
 import argparse
 import importlib
 import os
-
+import time
 import torch.distributed as dist
 from loguru import logger as logging
 from omegaconf import OmegaConf
@@ -59,6 +59,14 @@ def destroy_distributed():
 def launch(config: Config, args: argparse.Namespace) -> None:
     # Check that the config is valid
     config.validate()
+    if config.trainer.timestamp_seed:  # TODO (qianlim): check if this is set in the config yaml
+        # Get the current time in microseconds
+        current_time = int(time.time() * 1e6)
+        # Combine the current time with worker_id to ensure different seeds across workers
+        seed = current_time % (2**32)
+        config.trainer.seed = seed
+        log.critical(f"Changed Random Seed based on timestamp. {config.trainer.seed}")
+
     # Freeze the config so developers don't change it during training.
     config.freeze()  # type: ignore
     trainer = config.trainer.type(config)

@@ -94,6 +94,7 @@ def make_ctrlnet_config_7b_training(
                 distributed_parallelism="ddp",
                 logging_iter=200,
                 max_iter=999_999_999,
+                timestamp_seed=True,
             ),
             model_parallel=dict(
                 tensor_model_parallel_size=8,
