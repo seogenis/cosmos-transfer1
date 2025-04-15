@@ -24,15 +24,13 @@ from cosmos_transfer1.diffusion.datasets.augmentors.basic_augmentors import (
     ResizeLargestSideAspectPreserving,
     ReflectionPadding,
 )
-from cosmos_transfer1.diffusion.datasets.augmentors.text_transforms_for_video import (
-    TextTransformForVideo,
-)
 from cosmos_transfer1.diffusion.config.transfer.conditioner import (
     CTRL_HINT_KEYS,
     CTRL_HINT_KEYS_COMB,
 )
-from cosmos_transfer1.diffusion.datasets.video_dataset import CTRL_AUG_KEYS
+from cosmos_transfer1.diffusion.datasets.example_transfer_dataset import CTRL_AUG_KEYS
 from cosmos_transfer1.diffusion.config.transfer.blurs import BlurAugmentorConfig
+
 
 AUGMENTOR_OPTIONS = {}
 
@@ -48,7 +46,6 @@ def augmentor_register(key):
 @augmentor_register("video_basic_augmentor")
 def get_video_augmentor(
     resolution: str,
-    text_transform_input_keys: str,
     append_fps_frames: str = False,
     blur_config=None,
 ):
@@ -75,13 +72,6 @@ def get_video_augmentor(
             input_keys=["video"],
             args={"size": VIDEO_RES_SIZE_INFO[resolution]},
         ),
-        "text_transform": L(TextTransformForVideo)(
-            input_keys=text_transform_input_keys,
-            args={
-                "t5_tokens": {"num": 512, "dim": 1024},
-                "is_mask_all_ones": True,
-            },
-        ),
     }
 
 
@@ -93,7 +83,6 @@ for hint_key in CTRL_HINT_KEYS:
     def get_video_ctrlnet_augmentor(hint_key, use_random=True):
         def _get_video_ctrlnet_augmentor(
             resolution: str,
-            text_transform_input_keys: str,
             blur_config: BlurAugmentorConfig,
         ):
             if hint_key == "control_input_human_kpts":
@@ -143,7 +132,9 @@ for hint_key in CTRL_HINT_KEYS:
                     input_keys=input_keys,
                     output_keys=output_keys,
                 ),
+                # this addes the control input tensor to the data dict
                 "add_control_input": add_control_input,
+                # this resizes both the video and the control input to the model's required input size
                 "resize_largest_side_aspect_ratio_preserving": L(
                     ResizeLargestSideAspectPreserving
                 )(
@@ -153,13 +144,6 @@ for hint_key in CTRL_HINT_KEYS:
                 "reflection_padding": L(ReflectionPadding)(
                     input_keys=["video", hint_key],
                     args={"size": VIDEO_RES_SIZE_INFO[resolution]},
-                ),
-                "text_transform": L(TextTransformForVideo)(
-                    input_keys=text_transform_input_keys,
-                    args={
-                        "t5_tokens": {"num": 512, "dim": 1024},
-                        "is_mask_all_ones": True,
-                    },
                 ),
             }
             return augmentation

@@ -27,10 +27,10 @@ from hydra.core.config_store import ConfigStore
 
 from cosmos_transfer1.utils.lazy_config import LazyCall as L
 from cosmos_transfer1.utils.lazy_config import LazyDict
-from cosmos_transfer1.diffusion.config.transfer.blurs import random_blur_config
 from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS_COMB
 from cosmos_transfer1.diffusion.training.models.model_ctrl import VideoDiffusionModelWithCtrl  # this one has training support
 from cosmos_transfer1.diffusion.networks.general_dit_video_conditioned import VideoExtendGeneralDIT
+
 
 cs = ConfigStore.instance()
 
@@ -38,20 +38,12 @@ num_frames = 121
 num_blocks = 28
 num_control_blocks = 3
 
-# TODO (qianlim) add data config
-def get_data_train_name(hint_key: str) -> str:
-    pass
 
-def get_data_val_name(hint_key: str) -> str:
-    pass
 
 def make_ctrlnet_config_7b_training(
     hint_key: str = "control_input_canny",
     num_control_blocks: int = 3,
 ) -> LazyDict:
-
-    data_train = get_data_train_name(hint_key)
-    data_val = get_data_val_name(hint_key)
 
     # Create the complete configuration in one step
     config = LazyDict(
@@ -67,8 +59,9 @@ def make_ctrlnet_config_7b_training(
                 {"override /checkpoint": "local"},
                 {"override /ckpt_klass": "fast_tp"},
                 #
-                {"override /data_train": data_train},
-                {"override /data_val": data_val},
+                # data: register your own data at cosmos_transfer1/diffusion/config/base/data.py
+                {"override /data_train": f"example_transfer_train_data_{hint_key}"},
+                {"override /data_val": f"example_transfer_val_data_{hint_key}"},
                 "_self_",
             ],
             job=dict(
@@ -83,7 +76,10 @@ def make_ctrlnet_config_7b_training(
                 eps=1e-10,
             ),
             checkpoint=dict(
-                load_path="checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt",  # modify as needed. Here we assume post-train our pre-trained VisControl model.
+                 # Modify load_path as needed if you do post-training (fine-tuning).
+                 # If training from scratch, leave it empty.
+                 # Here we assume post-train our pre-trained VisControl model.
+                load_path="checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt",
                 broadcast_via_filesystem=True,
                 save_iter=1000,
                 load_training_state=False,
@@ -111,8 +107,8 @@ def make_ctrlnet_config_7b_training(
                     160,
                 ],
                 base_load_from=dict(
-                    load_path="checkpoints/nvidia/Cosmos-Transfer1-7B/base_model.pt",  # modify as needed. This is the base model (that's frozen during training).
-                ),
+                    load_path="checkpoints/nvidia/Cosmos-Transfer1-7B/base_model.pt",
+                ),  # modify as needed. This is the base model ckpt (that's frozen during training).
                 finetune_base_model=False,
                 hint_mask=[True] * len(CTRL_HINT_KEYS_COMB[hint_key]),
                 hint_dropout_rate=0.3,
@@ -159,37 +155,6 @@ def make_ctrlnet_config_7b_training(
                 f_start=[1.0e-6],
                 f_max=[1.0],
                 f_min=[1.0],
-            ),
-            dataloader_val=dict(
-                dataset=dict(
-                    resolution="720",
-                    num_video_frames=num_frames,
-                ),
-            ),
-            dataloader_train=dict(
-                dataloaders=dict(
-                    image_data=dict(
-                        dataloader=dict(
-                            batch_size=1,
-                            dataset=dict(
-                                resolution="720",
-                                blur_config=random_blur_config,
-                            ),
-                        ),
-                        ratio=0,  # only use video data for training.
-                    ),
-                    video_data=dict(
-                        dataloader=dict(
-                            batch_size=1,
-                            dataset=dict(
-                                resolution="720",
-                                num_video_frames=num_frames,
-                                blur_config=random_blur_config,
-                            ),
-                        ),
-                        ratio=1,
-                    ),
-                ),
             ),
         )
     )

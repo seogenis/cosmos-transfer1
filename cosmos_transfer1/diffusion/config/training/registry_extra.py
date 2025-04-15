@@ -25,10 +25,8 @@ from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEY
 
 
 from cosmos_transfer1.diffusion.config.transfer.registry import register_experiment_ctrlnet
+from cosmos_transfer1.diffusion.config.base.data import register_data_ctrlnet
 
-# TODO (qianlim) add config / tutorial for mock data
-def register_data_ctrlnet(cs):
-    pass
 
 def register_configs():
     cs = ConfigStore.instance()
@@ -40,5 +38,5 @@ def register_configs():
     base_training_registry.register_configs()
 
     # following will register data, experiment, callbacks
-    # register_data_ctrlnet(cs)  # Coming soon
+    register_data_ctrlnet(cs)
     register_experiment_ctrlnet(cs)

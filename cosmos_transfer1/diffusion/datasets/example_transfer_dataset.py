@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Run this command to interactively debug:
+PYTHONPATH=. python cosmos_transfer1/diffusion/datasets/example_transfer_dataset.py
+"""
+
 import os
 import warnings
 import traceback
-from typing import List, Tuple, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
-from torchvision import transforms as T
 
 import numpy as np
 import torch
@@ -28,114 +30,64 @@ from tqdm import tqdm
 from decord import VideoReader, cpu
 import pickle
 
-from cosmos_transfer1.diffusion.datasets.dataset_utils import (
-    ResizeSmallestSideAspectPreserving,
-    CenterCrop,
-    Normalize,
-)
-from cosmos_transfer1.diffusion.training.datasets.dataset_utils import (
-    ToTensorVideo, Resize_Preprocess
-)
 from cosmos_transfer1.diffusion.datasets.augmentor_provider import AUGMENTOR_OPTIONS
-from cosmos_transfer1.diffusion.datasets.augmentors.control_input import (
-    VIDEO_RES_SIZE_INFO,
-    AddControlInputComb,
-    AddControlInput,
-)
-# mappings between control types and corresponding sub-folders names in the data folder
+from cosmos_transfer1.diffusion.datasets.augmentors.control_input import VIDEO_RES_SIZE_INFO
+
+
 CTRL_AUG_KEYS = {
     "depth": "depth",
-    "seg": "seg",
+    "seg": "segmentation",
     "human_kpts": "human_kpts",
 }
 
-# Map control types to their folder names and whether they need pre-stored data
+# mappings between control types and corresponding sub-folders names in the data folder
 CTRL_TYPE_INFO = {
-    "human_kpts": {"folder": "human_annotation", "needs_data": True},
-    "depth": {"folder": "depth", "needs_data": True},
-    "seg": {"folder": "seg", "needs_data": True},
-    "canny": {"folder": None, "needs_data": False},  # Computed on-the-fly
-    "blur": {"folder": None, "needs_data": False},   # Computed on-the-fly
-    "upscale": {"folder": None, "needs_data": False} # Computed on-the-fly
+    "human_kpts": {"folder": "human_kpts", "format": "pickle", "data_dict_key": "human_kpts"},
+    "depth": {"folder": "depth", "format": "mp4", "data_dict_key": "depth"},
+    "seg": {"folder": "seg", "format": "pickle", "data_dict_key": "segmentation"},
+    "edge": {"folder": None},  # Canny edge, computed on-the-fly
+    "vis": {"folder": None},   # Blur, computed on-the-fly
+    "upscale": {"folder": None} # Computed on-the-fly
 }
 
 
-@dataclass
-class VideoDatasetWithCtrlConfig:  # TODO (qianlim) not needed?
-    """Configuration for VideoDatasetWithCtrlAnnotations.
-
-    Args:
-        dataset_name (str): Name of the dataset (e.g. "hdvila:control_input_human_kpts")
-        resolution (str): Data resolution ("256", "720", "1080")
-        num_video_frames (int): Number of frames to sample
-        video_decoder_name (str): Name of the video decoder
-        is_train (bool): Whether in training mode
-        use_fps_control (bool): Whether to use FPS control
-        min_fps_thres (int): Minimum FPS threshold when use_fps_control is True
-        max_fps_thres (int): Maximum FPS threshold when use_fps_control is True
-        dataset_resolution (str, optional): Minimum resolution to use in dataset
-        chunk_size (int, optional): Size of video chunks
-        rename_keys_src (list): Source keys to rename
-        rename_keys_target (list): Target keys to rename to
-        blur_config (dict, optional): Configuration for blur control
-    """
-    dataset_name: str  # e.g. "hdvila:control_input_human_kpts"
-    resolution: str
-    num_video_frames: int
-    is_train: bool
-    video_decoder_name: str = "video_decoder_w_controlled_fps"
-    use_fps_control: bool = False
-    min_fps_thres: int = 4
-    max_fps_thres: int = 24
-    dataset_resolution: Optional[str] = None
-    chunk_size: Optional[int] = None
-    rename_keys_src: List[str] = field(default_factory=list)
-    rename_keys_target: List[str] = field(default_factory=list)
-    blur_config: Optional[dict] = None
-
-
-class VideoDatasetWithCtrlAnnotations(Dataset):
+class ExampleTransferDataset(Dataset):
     def __init__(
         self,
         dataset_dir,
-        sequence_interval,
+        chunk_size,
         num_frames,
-        video_size,
         resolution,
         start_frame_interval=1,
-        ctrl_types=None,
-        augmentor_name="video_basic_augmentor",
+        hint_key="control_input_vis",
+        # augmentor_name="video_basic_augmentor",
         is_train=True
     ):
-        """Dataset class for loading image-text-to-video generation data with control inputs.
+        """Dataset class for loading video-text-to-video generation data with control inputs.
 
         Args:
             dataset_dir (str): Base path to the dataset directory
-            sequence_interval (int): Interval between sampled frames in a sequence
+            chunk_size (int): Interval between sampled frames in a sequence.
             num_frames (int): Number of frames to load per sequence
-            video_size (list): Target size [H,W] for video frames
+            resolution (str): resolution of the target video size
             start_frame_interval (int): Interval for starting frames
-            ctrl_types (list): List of control types to load (e.g. ["human_kpts", "depth"])
-            augmentor_name (str): Name of the augmentor to use
+            hint_key (str): The hint key for loading the correct control input data modality
             is_train (bool): Whether this is for training
+
+        NOTE: in our example dataset we do not have a validation dataset. The is_train flag is kept here for customized configuration.
         """
         super().__init__()
         self.dataset_dir = dataset_dir
         self.start_frame_interval = start_frame_interval
-        self.sequence_interval = sequence_interval
+        self.chunk_size = chunk_size
         self.sequence_length = num_frames
         self.is_train = is_train
         self.resolution = resolution
-
         assert resolution in VIDEO_RES_SIZE_INFO.keys(), "The provided resolution cannot be found in VIDEO_RES_SIZE_INFO."
 
         # Control input setup with file formats
-        self.ctrl_types = ctrl_types or []
-        self.ctrl_config = {
-            "human_kpts": {"folder": "human_kpts", "format": "pkl"},
-            "depth": {"folder": "depth", "format": "mp4"},
-            "segmentation": {"folder": "seg", "format": "pkl"}
-        }
+        self.ctrl_type = hint_key.lstrip("control_input_")
+        self.ctrl_data_pth_config = CTRL_TYPE_INFO[self.ctrl_type]
 
         # Set up directories
         video_dir = os.path.join(self.dataset_dir, "videos")
@@ -150,16 +102,14 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
 
         # Set up preprocessing and augmentation
         self.wrong_number = 0
-        self.preprocess = T.Compose([ToTensorVideo(), Resize_Preprocess(tuple(video_size))])
 
-        if self.ctrl_types:
-            self.augmentor = AUGMENTOR_OPTIONS[augmentor_name](
-                resolution=resolution,
-                text_transform_input_keys="",
-                append_fps_frames=False
-            )
-        else:
-            self.augmentor = None
+        augmentor_name = f"video_ctrlnet_augmentor_{hint_key}"
+        # The augmentor will process the 'raw' control input data to the tensor,
+        # add it to the data dict, and resize both the video and the control input to the model's required input size
+        self.augmentor = AUGMENTOR_OPTIONS[augmentor_name](
+            resolution=resolution,
+            append_fps_frames=False
+        )
 
     def _init_samples(self, video_paths):
         samples = []
@@ -173,26 +123,25 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
         return samples
 
     def _load_and_process_video_path(self, video_path):
-        # TODO (qianlim) add support for loading a chunck of N frames from loaded video and return the video and the frame ids
         vr = VideoReader(video_path, ctx=cpu(0), num_threads=2)
         n_frames = len(vr)
 
         # Check if all required control files exist
         ctrl_files_exist = True
         video_name = os.path.basename(video_path).replace(".mp4", "")
-        for ctrl_type in self.ctrl_types:
-            if ctrl_type not in self.ctrl_config:
-                continue
-            ctrl_info = self.ctrl_config[ctrl_type]
+
+        # load control input file if needed
+        if self.ctrl_data_pth_config["folder"] is not None:
             ctrl_path = os.path.join(
                 self.dataset_dir,
-                ctrl_info["folder"],
-                f"{video_name}.{ctrl_info['format']}"
+                self.ctrl_data_pth_config["folder"],
+                f"{video_name}.{self.ctrl_data_pth_config['format']}"
             )
             if not os.path.exists(ctrl_path):
                 ctrl_files_exist = False
-                warnings.warn(f"Missing control file: {ctrl_path}")
-                break
+                warnings.warn(f"Missing control input file: {ctrl_path}")
+        else:
+            ctrl_files_exist = True
 
         samples = []
         if not ctrl_files_exist:
@@ -205,21 +154,18 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
                 self.t5_dir,
                 os.path.basename(video_path).replace(".mp4", ".pickle"),
             )
-            # Add control paths with their formats
-            sample["ctrl_paths"] = {}
-            for ctrl_type in self.ctrl_types:
-                if ctrl_type in self.ctrl_config:
-                    ctrl_info = self.ctrl_config[ctrl_type]
-                    sample["ctrl_paths"][ctrl_info["folder"]] = {
-                        "path": os.path.join(
-                            self.dataset_dir,
-                            ctrl_info["folder"],
-                            f"{video_name}.{ctrl_info['format']}"
-                        ),
-                        "format": ctrl_info["format"]
-                    }
+
+            if self.ctrl_data_pth_config["folder"] is not None:
+                sample["ctrl_path"] = os.path.join(
+                    self.dataset_dir,
+                    self.ctrl_data_pth_config["folder"],
+                    f"{video_name}.{self.ctrl_data_pth_config['format']}"
+                )
+            else:
+                sample["ctrl_path"] = None
 
             sample["frame_ids"] = []
+            sample["chunk_index"] = -1
             curr_frame_i = frame_i
             while True:
                 if curr_frame_i > (n_frames - 1):
@@ -227,8 +173,9 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
                 sample["frame_ids"].append(curr_frame_i)
                 if len(sample["frame_ids"]) == self.sequence_length:
                     break
-                curr_frame_i += self.sequence_interval
+                curr_frame_i += self.chunk_size
             if len(sample["frame_ids"]) == self.sequence_length:
+                sample["chunk_index"] += 1
                 samples.append(sample)
         return samples
 
@@ -236,36 +183,36 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
         """Load control data for the video clip."""
         data_dict = {}
         frame_ids = sample["frame_ids"]
+        ctrl_path = sample["ctrl_path"]
+        try:
+            if self.ctrl_type == "seg":
+                with open(ctrl_path, 'rb') as f:
+                    ctrl_data = pickle.load(f)
+                # key should match line 982 at cosmos_transfer1/diffusion/datasets/augmentors/control_input.py
+                data_dict["segmentation"] = ctrl_data
+            elif self.ctrl_type == "human_kpts":
+                with open(ctrl_path, 'rb') as f:
+                    ctrl_data = pickle.load(f)
+                data_dict["human_kpts"] = ctrl_data
+            elif self.ctrl_type == "depth":
+                vr = VideoReader(ctrl_path, ctx=cpu(0))
+                # Ensure the depth video has the same number of frames
+                assert len(vr) >= frame_ids[-1] + 1, \
+                    f"Depth video {ctrl_data} has fewer frames than main video"
 
-        for ctrl_folder, ctrl_info in sample["ctrl_paths"].items():
-            try:
-                if ctrl_info["format"] == "pkl":
-                    # Load pickle files (for human_kpts and segmentation)
-                    with open(ctrl_info["path"], 'rb') as f:
-                        ctrl_data = pickle.load(f)
-                    data_dict[ctrl_folder] = ctrl_data
+                # Load the corresponding frames
+                depth_frames = vr.get_batch(frame_ids).asnumpy()
+                depth_frames = torch.from_numpy(depth_frames).permute(0, 3, 1, 2)  # [T,C,H,W]
+                data_dict["depth"] = {
+                    "video": depth_frames,
+                    "frame_start": frame_ids[0],
+                    "frame_end": frame_ids[-1],
+                    "chunk_index": sample["chunk_index"]
+                }
 
-                elif ctrl_info["format"] == "mp4":
-                    # Load video files (for depth)
-                    vr = VideoReader(ctrl_info["path"], ctx=cpu(0))
-                    # Ensure the depth video has the same number of frames
-                    assert len(vr) >= frame_ids[-1] + 1, \
-                        f"Depth video {ctrl_info['path']} has fewer frames than main video"
-
-                    # Load the corresponding frames
-                    depth_frames = vr.get_batch(frame_ids).asnumpy()
-                    depth_frames = torch.from_numpy(depth_frames).permute(0, 3, 1, 2)  # [T,C,H,W]
-
-                    data_dict[ctrl_folder] = {
-                        "video": depth_frames,
-                        "frame_start": frame_ids[0],
-                        "frame_end": frame_ids[-1],
-                        "chunk_index": 0  # Required by some augmentors
-                    }
-
-            except Exception as e:
-                warnings.warn(f"Failed to load control data from {ctrl_info['path']}: {str(e)}")
-                return None
+        except Exception as e:
+            warnings.warn(f"Failed to load control data from {ctrl_data}: {str(e)}")
+            return None
 
         return data_dict
 
@@ -319,13 +266,14 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
             data["fps"] = fps
             data["frame_start"] = frame_ids[0]
             data["frame_end"] = frame_ids[-1]
+            data["chunk_index"] = sample["chunk_index"]
             data["image_size"] = torch.tensor([704, 1280, 704, 1280]).cuda()
             data["num_frames"] = self.sequence_length
             data["padding_mask"] = torch.zeros(1, 704, 1280).cuda()
 
-            if self.ctrl_types:
+            if self.ctrl_type:
                 ctrl_data = self._load_control_data(sample)
-                if ctrl_data is None:  # Control data loading failed
+                if ctrl_data is None:  # Control data loading failed, discard this sample and reload another sample
                     return self[np.random.randint(len(self.samples))]
                 data.update(ctrl_data)
 
@@ -351,3 +299,31 @@ class VideoDatasetWithCtrlAnnotations(Dataset):
 
     def __str__(self):
         return f"{len(self.video_paths)} samples from {self.dataset_dir}"
+
+
+if __name__ == "__main__":
+    dataset = ExampleTransferDataset(
+        dataset_dir="assets/example_transfer_training_data/",
+        hint_key="control_input_seg",
+        chunk_size=1,
+        num_frames=121,
+        resolution="720",
+        # augmentor_name="video_basic_augmentor",
+        is_train=True
+    )
+
+    indices = [0, 13, 200, -1]
+    for idx in indices:
+        data = dataset[idx]
+        print(
+            (
+                f"{idx=} "
+                f"{data['video'].sum()=}\n"
+                f"{data['video'].shape=}\n"
+                f"{data['depth']['video'].sum()=}\n"
+                f"{data['depth']['video'].shape=}\n"
+                f"{data['video_name']=}\n"
+                f"{data['t5_text_embeddings'].shape=}\n"
+                "---"
+            )
+        )

@@ -92,11 +92,8 @@ class TextTransformForVideo(Augmentor):
         try:
             if "vila_caption" in selected_caption_window:
                 caption_type = "vila_caption"
-            elif "qwen_caption" in selected_caption_window:
-                caption_type = "qwen_caption"
             else:
                 caption_type = random.choices(["long_caption", "short_caption"], weights=[0.95, 0.05], k=1)[0]
-                # TODO(hanzim): make probabilities configurable when we need it
             data_dict["ai_caption"] = selected_caption_window[caption_type]
         except Exception as e:
             log.warning(
@@ -105,14 +102,13 @@ class TextTransformForVideo(Augmentor):
             )
             return None
 
-        # TODO(hanzim): temp fix for samples with gt_caption = None
         if data_dict["ai_caption"] is None:
             data_dict["ai_caption"] = ""
         del data_dict[input_keys_by_source["ai_caption"]]
 
         ai_caption_embedding_data = data_dict[input_keys_by_source["ai_caption_embedding"]]
         try:
-            if caption_type in ["vila_caption", "qwen_caption"]:
+            if caption_type in ["vila_caption"]:
                 t5_embedding = ai_caption_embedding_data[data_dict["chunk_index"]]
             else:
                 t5_embedding = ai_caption_embedding_data[data_dict["chunk_index"]][

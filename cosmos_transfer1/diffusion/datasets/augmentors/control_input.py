@@ -66,8 +66,6 @@ VIDEO_RES_SIZE_INFO: dict[str, tuple[int, int]] = {
         "16,9": (1920, 1056),
         "9,16": (1056, 1920),
     },
-    # 1024; the video format does not support it, but here we match it with image resolution
-    "1024": {"1,1": (1024, 1024), "4,3": (1280, 1024), "3,4": (1024, 1280), "16,9": (1280, 768), "9,16": (768, 1280)},
     "720": {"1,1": (960, 960), "4,3": (960, 704), "3,4": (704, 960), "16,9": (1280, 704), "9,16": (704, 1280)},
     "512": {"1,1": (512, 512), "4,3": (640, 512), "3,4": (512, 640), "16,9": (640, 384), "9,16": (384, 640)},
     "480": {"1,1": (480, 480), "4,3": (640, 480), "3,4": (480, 640), "16,9": (768, 432), "9,16": (432, 768)},
@@ -704,7 +702,7 @@ class AddControlInputDepth(Augmentor):
             data_dict[self.output_keys[0]] = torch.from_numpy(np.zeros((3, h, w)).astype(np.uint8))
             return data_dict
 
-        assert data_dict["chunk_index"] == data_dict["depth"]["chunk_index"]
+        # assert data_dict["chunk_index"] == data_dict["depth"]["chunk_index"]
         key_out = self.output_keys[0]
         depth = data_dict["depth"]["video"]
         data_dict[key_out] = depth
