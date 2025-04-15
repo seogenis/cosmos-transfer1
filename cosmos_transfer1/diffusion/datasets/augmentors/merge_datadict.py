@@ -43,8 +43,8 @@ class DataDictMerger(Augmentor):
             key_dict = data_dict.pop(key)
             if key == "depth" and "depth" in self.output_keys:
                 data_dict["depth"] = key_dict
-            if key == "human_kpts" and "human_kpts" in self.output_keys:
-                data_dict["human_kpts"] = key_dict
+            if key == "keypoint" and "keypoint" in self.output_keys:
+                data_dict["keypoint"] = key_dict
             elif key == "segmentation" and "segmentation" in self.output_keys:
                 data_dict["segmentation"] = key_dict
             for sub_key in key_dict:

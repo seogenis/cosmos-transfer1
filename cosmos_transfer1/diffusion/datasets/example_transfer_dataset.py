@@ -37,12 +37,12 @@ from cosmos_transfer1.diffusion.datasets.augmentors.control_input import VIDEO_R
 CTRL_AUG_KEYS = {
     "depth": "depth",
     "seg": "segmentation",
-    "human_kpts": "human_kpts",
+    "keypoint": "keypoint",
 }
 
 # mappings between control types and corresponding sub-folders names in the data folder
 CTRL_TYPE_INFO = {
-    "human_kpts": {"folder": "human_kpts", "format": "pickle", "data_dict_key": "human_kpts"},
+    "keypoint": {"folder": "keypoint", "format": "pickle", "data_dict_key": "keypoint"},
     "depth": {"folder": "depth", "format": "mp4", "data_dict_key": "depth"},
     "seg": {"folder": "seg", "format": "pickle", "data_dict_key": "segmentation"},
     "edge": {"folder": None},  # Canny edge, computed on-the-fly
@@ -190,10 +190,10 @@ class ExampleTransferDataset(Dataset):
                     ctrl_data = pickle.load(f)
                 # key should match line 982 at cosmos_transfer1/diffusion/datasets/augmentors/control_input.py
                 data_dict["segmentation"] = ctrl_data
-            elif self.ctrl_type == "human_kpts":
+            elif self.ctrl_type == "keypoint":
                 with open(ctrl_path, 'rb') as f:
                     ctrl_data = pickle.load(f)
-                data_dict["human_kpts"] = ctrl_data
+                data_dict["keypoint"] = ctrl_data
             elif self.ctrl_type == "depth":
                 vr = VideoReader(ctrl_path, ctx=cpu(0))
                 # Ensure the depth video has the same number of frames
@@ -303,7 +303,7 @@ class ExampleTransferDataset(Dataset):
 
 if __name__ == "__main__":
     dataset = ExampleTransferDataset(
-        dataset_dir="assets/example_transfer_training_data/",
+        dataset_dir="assets/hdvila/",
         hint_key="control_input_seg",
         chunk_size=1,
         num_frames=121,

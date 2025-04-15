@@ -18,18 +18,24 @@ This script will make + register the architecture + training-related configs for
 The configs are registered under the group "experiment" and can be used in training by passing the experiment name as an argument.
 
 Example usage:
-    - [dryrun, generate and inspect EdgeControl config] torchrun --nproc_per_node=1 -m cosmos_transfer1.diffusion.training.train --dryrun --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3
-    - [real run, 8 gpu, train SegControl] torchrun --nproc_per_node=8 -m cosmos_transfer1.diffusion.training.train --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_seg_block3
-    - [real run, 8 gpu, train DepthControl] torchrun --nproc_per_node=8 -m cosmos_transfer1.diffusion.training.train --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_depth_block3
+    - [dryrun, generate and inspect EdgeControl config]:
+            torchrun --nproc_per_node=1 -m cosmos_transfer1.diffusion.training.train --dryrun --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain
+    - [real run, 8 gpu, train SegControl from scratch]:
+            torchrun --nproc_per_node=8 -m cosmos_transfer1.diffusion.training.train --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_seg_block3_pretrain
+    - [real run, 8 gpu, train SegControl from released checkpoint]:
+            torchrun --nproc_per_node=8 -m cosmos_transfer1.diffusion.training.train --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_seg_block3_posttrain
 """
 
 from hydra.core.config_store import ConfigStore
+import os
 
 from cosmos_transfer1.utils.lazy_config import LazyCall as L
 from cosmos_transfer1.utils.lazy_config import LazyDict
 from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS_COMB
 from cosmos_transfer1.diffusion.training.models.model_ctrl import VideoDiffusionModelWithCtrl  # this one has training support
 from cosmos_transfer1.diffusion.networks.general_dit_video_conditioned import VideoExtendGeneralDIT
+from cosmos_transfer1.diffusion.inference.inference_utils import default_model_names
+from cosmos_transfer1.checkpoints import BASE_7B_CHECKPOINT_PATH, COSMOS_TRANSFER1_7B_CHECKPOINT
 
 
 cs = ConfigStore.instance()
@@ -39,13 +45,18 @@ num_blocks = 28
 num_control_blocks = 3
 
 
-
 def make_ctrlnet_config_7b_training(
     hint_key: str = "control_input_canny",
     num_control_blocks: int = 3,
+    pretrain_model_path: str = ""
 ) -> LazyDict:
+    if pretrain_model_path == "":
+       job_name = f"CTRL_7Bv1pt3_lvg_tp_121frames_{hint_key}_block{num_control_blocks}_pretrain"
+       job_project = "cosmos_transfer1_pretrain"
+    else:
+       job_name = f"CTRL_7Bv1pt3_lvg_tp_121frames_{hint_key}_block{num_control_blocks}_posttrain"
+       job_project = "cosmos_transfer1_posttrain"
 
-    # Create the complete configuration in one step
     config = LazyDict(
         dict(
             defaults=[
@@ -64,10 +75,11 @@ def make_ctrlnet_config_7b_training(
                 {"override /data_val": f"example_transfer_val_data_{hint_key}"},
                 "_self_",
             ],
+            # ckpt, config yaml files etc. will be saved under checkpoints/<project>/<group>/<name>/
             job=dict(
+                project=job_project,
                 group="CTRL_7Bv1_lvg",
-                name=f"CTRL_7Bv1pt3_lvg_tp_121frames_{hint_key}_block{num_control_blocks}",
-                project="cosmos_transfer1_posttrain",
+                name=job_name,
             ),
             optimizer=dict(
                 lr=2 ** (-14.3),  # ~5e-5
@@ -76,10 +88,7 @@ def make_ctrlnet_config_7b_training(
                 eps=1e-10,
             ),
             checkpoint=dict(
-                 # Modify load_path as needed if you do post-training (fine-tuning).
-                 # If training from scratch, leave it empty.
-                 # Here we assume post-train our pre-trained VisControl model.
-                load_path="checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt",
+                load_path=pretrain_model_path,  # Modify load_path as needed if you do post-training (fine-tuning). If training from scratch, leave it empty.
                 broadcast_via_filesystem=True,
                 save_iter=1000,
                 load_training_state=False,
@@ -107,8 +116,8 @@ def make_ctrlnet_config_7b_training(
                     160,
                 ],
                 base_load_from=dict(
-                    load_path="checkpoints/nvidia/Cosmos-Transfer1-7B/base_model.pt",
-                ),  # modify as needed. This is the base model ckpt (that's frozen during training).
+                    load_path=os.path.join(COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_mp_*.pt")
+                ),  # modify as needed. This is the TP version of base model ckpt (that's frozen during training).
                 finetune_base_model=False,
                 hint_mask=[True] * len(CTRL_HINT_KEYS_COMB[hint_key]),
                 hint_dropout_rate=0.3,
@@ -163,12 +172,28 @@ def make_ctrlnet_config_7b_training(
 
 """
 Register configurations
-The loop below will register all experiments CTRL_7Bv1pt3_lvg_tp_121frames_control_input_{hint_key_name}_block3 for each hint_key_name
-and then in training command, simply need to pass the "experiment" arg to override the configs. See the docstring at top of this script
-for an example.
+The loop below will register ALL experiments CTRL_7Bv1pt3_lvg_tp_121frames_control_input_{hint_key_name}_block3_{pretrain_or_posttrain} for ALL hint_key_name.
+Then in training command, simply need to pass the "experiment" arg to override the configs. See the docstring at top of this script for an example.
+
+# NOTE: To launch real post-training, convert the checkpoints to TP checkpoints first. See scripts/convert_ckpt_fsdp_to_tp.py.
 """
 for key in CTRL_HINT_KEYS_COMB.keys():
-    config = make_ctrlnet_config_7b_training(hint_key=key, num_control_blocks=num_control_blocks)
+    # Register experiments for pretraining from scratch 
+    config = make_ctrlnet_config_7b_training(hint_key=key, num_control_blocks=num_control_blocks, pretrain_model_path="")
+    cs.store(
+        group="experiment",
+        package="_global_",
+        name=config["job"]["name"],
+        node=config,
+    )
+
+    # Register experiments for post-training from TP checkpoints.
+    hint_key_short = key.replace("control_input_", "")  # "control_input_vis" -> "vis"
+    base_ckpt_path = default_model_names[hint_key_short]
+    tp_ckpt_path = os.path.join(os.path.dirname(base_ckpt_path), "checkpoints_tp", os.path.basename(base_ckpt_path))
+    config = make_ctrlnet_config_7b_training(hint_key=key, num_control_blocks=num_control_blocks, pretrain_model_path=tp_ckpt_path)
+    print(tp_ckpt_path, '=======\n\n')
+    import ipdb; ipdb.set_trace()
     cs.store(
         group="experiment",
         package="_global_",

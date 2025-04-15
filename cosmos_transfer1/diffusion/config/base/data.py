@@ -20,7 +20,7 @@ def get_sampler(dataset):
 
 def get_example_transfer_dataset(hint_key, is_train=True):
     dataset = L(ExampleTransferDataset)(
-        dataset_dir="datasets/example_transfer_training_data",
+        dataset_dir="datasets/hdvila",
         chunk_size=256,
         num_frames=121,
         resolution="720",

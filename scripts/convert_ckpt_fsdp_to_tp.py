@@ -110,17 +110,25 @@ if __name__ == "__main__":
         python convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt
 
     This will save the Tensor Parallel (TP) checkpoints as 8 files in the same directory:
-        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_tp_mp_0.pt
+        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_mp_0.pt
         ...
-        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_tp_mp_7.pt
+        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_mp_7.pt
     '''
     if len(sys.argv) != 2:
         print("Usage: python convert_ckpt_fsdp_to_tp.py <path_to_checkpoint.pt>")
         print("Example: python convert_ckpt_fsdp_to_tp.py checkpoints/model.pt")
         sys.exit(1)
 
+    
     checkpoint_path = sys.argv[1]
-    out_tp_checkpoint_path = os.path.basename(checkpoint_path).replace(".pt", "")
+
+    # Create checkpoints_tp directory in the same parent directory as the input checkpoint
+    input_dir = os.path.dirname(checkpoint_path)
+    tp_ckpt_dir = os.path.join(input_dir, 'checkpoints_tp')
+    os.makedirs(tp_ckpt_dir, exist_ok=True)
+    
+    # Use the same basename as input but in the checkpoints_tp directory
+    out_tp_checkpoint_path = os.path.join(tp_ckpt_dir, os.path.basename(checkpoint_path).replace(".pt", ""))
     try:
         convert_fsdp_to_tp(checkpoint_path, out_tp_checkpoint_path)
         print("Conversion completed successfully!")

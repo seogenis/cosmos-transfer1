@@ -85,7 +85,7 @@ for hint_key in CTRL_HINT_KEYS:
             resolution: str,
             blur_config: BlurAugmentorConfig,
         ):
-            if hint_key == "control_input_human_kpts":
+            if hint_key == "control_input_keypoint":
                 add_control_input = L(AddControlInputComb)(
                     input_keys=["", "video"],
                     output_keys=[hint_key],
