@@ -140,17 +140,12 @@ class GeneralDITEncoder(GeneralDIT):
 
         hint_B_T_H_W_D, _ = self.prepare_hint_embedded_sequence(hint, fps=fps, padding_mask=padding_mask)
 
-        if self.blocks["block0"].x_format == "THWBD":
-            hint = rearrange(hint_B_T_H_W_D, "B T H W D -> T H W B D")
-            if self.sequence_parallel:
-                tp_group = parallel_state.get_tensor_model_parallel_group()
-                T, H, W, B, D = hint.shape
-                hint = hint.view(T * H * W, 1, 1, B, -1)
-                hint = scatter_along_first_dim(hint, tp_group)
-        elif self.blocks["block0"].x_format == "BTHWD":
-            hint = hint_B_T_H_W_D
-        else:
-            raise ValueError(f"Unknown x_format {self.blocks[0].x_format}")
+        hint = rearrange(hint_B_T_H_W_D, "B T H W D -> T H W B D")
+        if self.sequence_parallel:
+            tp_group = parallel_state.get_tensor_model_parallel_group()
+            T, H, W, B, D = hint.shape
+            hint = hint.view(T * H * W, 1, 1, B, -1)
+            hint = scatter_along_first_dim(hint, tp_group)
 
         guided_hint = self.input_hint_block(hint)
         return guided_hint
@@ -245,10 +240,9 @@ class GeneralDITEncoder(GeneralDIT):
         else:
             crossattn_mask = None
 
-        if self.blocks["block0"].x_format == "THWBD":
-            crossattn_emb = rearrange(crossattn_emb, "B M D -> M B D")
-            if crossattn_mask:
-                crossattn_mask = rearrange(crossattn_mask, "B M -> M B")
+        crossattn_emb = rearrange(crossattn_emb, "B M D -> M B D")
+        if crossattn_mask:
+            crossattn_mask = rearrange(crossattn_mask, "B M -> M B")
 
         outs = {}
 
@@ -379,7 +373,7 @@ class GeneralDITEncoder(GeneralDIT):
                     # Reshape to match THWBD format
                     weight_map = weight_map.permute(2, 3, 4, 0, 1)  # [T, H, W, B, 1]
                     weight_map = weight_map.view(T * H * W, 1, 1, B, 1)
-                    
+
                     if self.sequence_parallel:
                         weight_map = scatter_along_first_dim(weight_map, tp_group)
 
