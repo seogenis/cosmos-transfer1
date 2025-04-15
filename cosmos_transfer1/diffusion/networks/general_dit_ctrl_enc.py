@@ -252,8 +252,9 @@ class GeneralDITEncoder(GeneralDIT):
 
         outs = {}
 
-        # If also training base model, sometimes drop the controlnet branch to only train base branch.
-        # This is to prevent the network become dependent on controlnet branch and make control weight useless.
+        # (Experimental, not used in the released model) if also training base model, sometimes drop the 
+        # controlnet branch to only train base branch. This is to prevent the network become dependent on
+        # controlnet branch and make control weight useless.
         is_training = torch.is_grad_enabled()
         is_training_base_model = any(p.requires_grad for p in base_model.parameters())
         if is_training and is_training_base_model:
@@ -266,17 +267,9 @@ class GeneralDITEncoder(GeneralDIT):
             coin_flip = 1
 
         num_control_blocks = self.layer_mask.index(True)
-        if self.random_drop_control_blocks:
-            if is_training:  # Use a random number of layers during training.
-                num_layers_to_use = np.random.randint(num_control_blocks) + 1
-            elif num_layers_to_use == -1:  # Evaluate using all the layers.
-                num_layers_to_use = num_control_blocks
-            else:  # Use the specified number of layers during inference.
-                pass
-        else:  # Use all of the layers.
-            num_layers_to_use = num_control_blocks
+        num_layers_to_use = num_control_blocks
         control_gate_per_layer = [i < num_layers_to_use for i in range(num_control_blocks)]
-
+        
         if isinstance(control_weight, torch.Tensor):
             if control_weight.ndim == 0:  # Single scalar tensor
                 control_weight = [float(control_weight)] * len(guided_hints)
@@ -287,7 +280,6 @@ class GeneralDITEncoder(GeneralDIT):
         else:
             control_weight = [control_weight] * len(guided_hints)
 
-        # max_norm = {}
         x_before_blocks = x.clone()
         for i, guided_hint in enumerate(guided_hints):
             x = x_before_blocks
@@ -337,34 +329,28 @@ class GeneralDITEncoder(GeneralDIT):
             self.affline_scale_log_info = affline_scale_log_info
             self.affline_emb = affline_emb_B_D
 
-            if self.blocks["block0"].x_format == "THWBD":
-                x = rearrange(x_B_T_H_W_D, "B T H W D -> T H W B D")
+            x = rearrange(x_B_T_H_W_D, "B T H W D -> T H W B D")
+            if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
+                extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D = rearrange(
+                    extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, "B T H W D -> T H W B D"
+                )
+
+            if self.sequence_parallel:
+                tp_group = parallel_state.get_tensor_model_parallel_group()
+                # Sequence parallel requires the input tensor to be scattered along the first dimension.
+                assert self.block_config == "FA-CA-MLP"  # Only support this block config for now
+                T, H, W, B, D = x.shape
+                # variable name x_T_H_W_B_D is no longer valid. x is reshaped to THW*1*1*b*D and will be reshaped back in FinalLayer
+                x = x.view(T * H * W, 1, 1, B, D)
+                assert x.shape[0] % parallel_state.get_tensor_model_parallel_world_size() == 0
+                x = scatter_along_first_dim(x, tp_group)
                 if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
-                    extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D = rearrange(
-                        extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, "B T H W D -> T H W B D"
+                    extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D = extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D.view(
+                        T * H * W, 1, 1, B, D
                     )
-
-                if self.sequence_parallel:
-                    tp_group = parallel_state.get_tensor_model_parallel_group()
-                    # Sequence parallel requires the input tensor to be scattered along the first dimension.
-                    assert self.block_config == "FA-CA-MLP"  # Only support this block config for now
-                    T, H, W, B, D = x.shape
-                    # variable name x_T_H_W_B_D is no longer valid. x is reshaped to THW*1*1*b*D and will be reshaped back in FinalLayer
-                    x = x.view(T * H * W, 1, 1, B, D)
-                    assert x.shape[0] % parallel_state.get_tensor_model_parallel_world_size() == 0
-                    x = scatter_along_first_dim(x, tp_group)
-                    if extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D is not None:
-                        extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D = extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D.view(
-                            T * H * W, 1, 1, B, D
-                        )
-                        extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D = scatter_along_first_dim(
-                            extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, tp_group
-                        )
-
-            elif self.blocks["block0"].x_format == "BTHWD":
-                x = x_B_T_H_W_D
-            else:
-                raise ValueError(f"Unknown x_format {self.blocks[0].x_format}")
+                    extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D = scatter_along_first_dim(
+                        extra_pos_emb_B_T_H_W_D_or_T_H_W_B_D, tp_group
+                    )
 
             for idx, (name, block) in enumerate(blocks.items()):
                 assert (
@@ -388,40 +374,15 @@ class GeneralDITEncoder(GeneralDIT):
                     hint_val = zero_blocks[name](x) * control_weight[i] * coin_flip * gate
                 else:  # Spatial-temporal weights [num_controls, B, 1, T, H, W]
                     control_feat = zero_blocks[name](x)
-
                     # Get current feature dimensions
-                    if self.blocks["block0"].x_format == "THWBD":
-                        weight_map = control_weight[i]  # [B, 1, T, H, W]
+                    weight_map = control_weight[i]  # [B, 1, T, H, W]
+                    # Reshape to match THWBD format
+                    weight_map = weight_map.permute(2, 3, 4, 0, 1)  # [T, H, W, B, 1]
+                    weight_map = weight_map.view(T * H * W, 1, 1, B, 1)
+                    
+                    if self.sequence_parallel:
+                        weight_map = scatter_along_first_dim(weight_map, tp_group)
 
-                        if weight_map.shape[2:5] != (T, H, W):
-                            assert weight_map.shape[2] == 8 * (T - 1) + 1
-                            weight_map_i = [
-                                torch.nn.functional.interpolate(
-                                    weight_map[:, :, :1, :, :],
-                                    size=(1, H, W),
-                                    mode="trilinear",
-                                    align_corners=False,
-                                )
-                            ]
-                            for wi in range(1, weight_map.shape[2], 8):
-                                weight_map_i += [
-                                    torch.nn.functional.interpolate(
-                                        weight_map[:, :, wi : wi + 8],
-                                        size=(1, H, W),
-                                        mode="trilinear",
-                                        align_corners=False,
-                                    )
-                                ]
-                            weight_map = torch.cat(weight_map_i, dim=2)
-
-                        # Reshape to match THWBD format
-                        weight_map = weight_map.permute(2, 3, 4, 0, 1)  # [T, H, W, B, 1]
-                        weight_map = weight_map.view(T * H * W, 1, 1, B, 1)
-                        if self.sequence_parallel:
-                            weight_map = scatter_along_first_dim(weight_map, tp_group)
-
-                    else:  # BTHWD format
-                        raise NotImplementedError("BTHWD format for weight map is not implemented yet.")
                     hint_val = control_feat * weight_map * coin_flip * gate
 
                 if name not in outs:
