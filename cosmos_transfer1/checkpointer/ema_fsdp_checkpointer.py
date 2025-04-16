@@ -19,7 +19,7 @@ import attrs
 
 from cosmos_transfer1.utils import log
 from cosmos_transfer1.utils.config import CheckpointConfig as BaseCheckpointConfig
-from cosmos_transfer1.utils.config import make_freezable
+from cosmos_transfer1.utils.ddp_config import make_freezable
 from cosmos_transfer1.checkpointer.fsdp_checkpointer import FSDPCheckpointer as BaseFSDPCheckpointer
 
 

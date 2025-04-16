@@ -19,24 +19,100 @@ Registry for training experiments, callbacks and data.
 
 from hydra.core.config_store import ConfigStore
 
-import cosmos_transfer1.diffusion.config.registry as base_registry
+from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS, BaseVideoConditionerWithCtrlConfig, VideoConditionerFpsSizePaddingWithCtrlConfig
 import cosmos_transfer1.diffusion.config.training.registry as base_training_registry
-from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS
-
-
-from cosmos_transfer1.diffusion.config.transfer.registry import register_experiment_ctrlnet
+from cosmos_transfer1.diffusion.config.registry import register_conditioner
 from cosmos_transfer1.diffusion.config.base.data import register_data_ctrlnet
+
+from cosmos_transfer1.diffusion.training.networks.general_dit_ctrl_enc import GeneralDITEncoder
+from cosmos_transfer1.diffusion.training.networks.general_dit import GeneralDIT
+from cosmos_transfer1.diffusion.config.training.tokenizer import get_cosmos_diffusion_tokenizer_comp8x8x8
+from cosmos_transfer1.diffusion.config.registry import register_tokenizer
+from cosmos_transfer1.utils.lazy_config import LazyCall as L
+from cosmos_transfer1.utils.lazy_config import LazyDict
+import copy
+
+FADITV2ConfigTrain: LazyDict = L(GeneralDIT)(
+    max_img_h=240,
+    max_img_w=240,
+    max_frames=128,
+    in_channels=16,
+    out_channels=16,
+    patch_spatial=2,
+    patch_temporal=1,
+    model_channels=4096,
+    block_config="FA-CA-MLP",
+    num_blocks=28,
+    num_heads=32,
+    concat_padding_mask=True,
+    pos_emb_cls="rope3d",
+    pos_emb_learnable=False,
+    pos_emb_interpolation="crop",
+    block_x_format="THWBD",
+    additional_timestamp_channels=None,
+    affline_emb_norm=True,
+    use_adaln_lora=True,
+    adaln_lora_dim=256,
+    legacy_patch_emb=False,
+)
+
+num_blocks = FADITV2ConfigTrain["num_blocks"]
+FADITV2EncoderConfigTrain = copy.deepcopy(FADITV2ConfigTrain)
+FADITV2EncoderConfigTrain["_target_"] = GeneralDITEncoder
+FADITV2EncoderConfigTrain["layer_mask"] = [True if i > num_blocks // 2 else False for i in range(num_blocks)]
+
+
+def register_net_train(cs):
+    cs.store(
+        group="net",
+        package="model.net",
+        name="faditv2_7b",
+        node=FADITV2ConfigTrain,
+    )
+    cs.store(group="net_ctrl", package="model.net_ctrl", name="faditv2_7b", node=FADITV2EncoderConfigTrain)
+
+
+def register_conditioner_ctrlnet(cs):
+    cs.store(
+        group="conditioner",
+        package="model.conditioner",
+        name="ctrlnet",
+        node=BaseVideoConditionerWithCtrlConfig,
+    )
+    cs.store(
+        group="conditioner",
+        package="model.conditioner",
+        name="ctrlnet_add_fps_image_size_padding_mask",
+        node=VideoConditionerFpsSizePaddingWithCtrlConfig,
+    )
 
 
 def register_configs():
     cs = ConfigStore.instance()
 
-    # This will register all the basic configs: net, conditioner, tokenizer.
-    base_registry.register_configs()
+    # register all the basic configs: net, conditioner, tokenizer.
+    register_net_train(cs)
+    register_conditioner(cs)
+    register_conditioner_ctrlnet(cs)
+    register_tokenizer(cs)
 
-    # This will register training configs: optimizer, scheduler, callbacks, etc.
+    # register training configs: optimizer, scheduler, callbacks, etc.
     base_training_registry.register_configs()
 
-    # following will register data, experiment, callbacks
+    # register data, experiment, callbacks
     register_data_ctrlnet(cs)
-    register_experiment_ctrlnet(cs)
+
+    # register hint keys
+    for hint_key in CTRL_HINT_KEYS:
+        cs.store(
+            group="hint_key",
+            package="model",
+            name=hint_key,
+            node=dict(hint_key=dict(hint_key=hint_key, grayscale=False)),
+        )
+        cs.store(
+            group="hint_key",
+            package="model",
+            name=f"{hint_key}_grayscale",
+            node=dict(hint_key=dict(hint_key=hint_key, grayscale=True)),
+        )

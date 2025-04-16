@@ -21,14 +21,23 @@ import ctypes
 import functools
 import os
 from datetime import timedelta
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 import pynvml
 import torch
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from cosmos_transfer1.utils import log
 from cosmos_transfer1.utils.device import Device
+from cosmos_transfer1.utils.ddp_config import DDPConfig
+
+try:
+    from megatron.core import parallel_state
+except ImportError:
+    print("Megatron-core is not installed.")
+
+T = TypeVar("T")
 
 
 def init() -> int | None:
@@ -126,6 +135,52 @@ def barrier() -> None:
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
 
+
+def rank0_first(func: Callable) -> Callable:
+    """run the function on rank 0 first, then on other ranks."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):  # noqa: ANN202
+        if is_rank0():
+            result = func(*args, **kwargs)
+        barrier()
+        if not is_rank0():
+            result = func(*args, **kwargs)
+        return result
+
+    return wrapper
+
+
+def parallel_model_wrapper(config_ddp: DDPConfig, model: torch.nn.Module) -> torch.nn.Module | DDP:
+    """Wraps the model to enable data parallalism for training across multiple GPU devices.
+
+    Args:
+        config_ddp (DDPConfig): The data parallel config.
+        model (torch.nn.Module): The PyTorch module.
+
+    Returns:
+        model (torch.nn.Module | DistributedDataParallel): The data parallel model wrapper
+            if distributed environment is available, otherwise return the original model.
+    """
+    if dist.is_available() and dist.is_initialized():
+        local_rank = int(os.getenv("LOCAL_RANK", 0))
+        try:
+            ddp_group = parallel_state.get_data_parallel_group(with_context_parallel=True)
+        except Exception as e:
+            log.info(e)
+            log.info("parallel_state not initialized, treating all GPUs equally for DDP")
+            ddp_group = None
+
+        model = DDP(
+            model,
+            device_ids=[local_rank],
+            output_device=local_rank,
+            find_unused_parameters=config_ddp.find_unused_parameters,
+            static_graph=config_ddp.static_graph,
+            broadcast_buffers=config_ddp.broadcast_buffers,
+            process_group=ddp_group,
+        )
+    return model
 
 class DistributedDataParallel(torch.nn.parallel.DistributedDataParallel):
     """This extends torch.nn.parallel.DistributedDataParallel with .training_step().

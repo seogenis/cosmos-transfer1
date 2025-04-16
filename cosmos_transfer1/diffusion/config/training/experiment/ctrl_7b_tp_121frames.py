@@ -33,9 +33,9 @@ from cosmos_transfer1.utils.lazy_config import LazyCall as L
 from cosmos_transfer1.utils.lazy_config import LazyDict
 from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS_COMB
 from cosmos_transfer1.diffusion.training.models.model_ctrl import VideoDiffusionModelWithCtrl  # this one has training support
-from cosmos_transfer1.diffusion.networks.general_dit_video_conditioned import VideoExtendGeneralDIT
+from cosmos_transfer1.diffusion.training.networks.general_dit_video_conditioned import VideoExtendGeneralDIT
 from cosmos_transfer1.diffusion.inference.inference_utils import default_model_names
-from cosmos_transfer1.checkpoints import BASE_7B_CHECKPOINT_PATH, COSMOS_TRANSFER1_7B_CHECKPOINT
+from cosmos_transfer1.checkpoints import COSMOS_TRANSFER1_7B_CHECKPOINT
 
 
 cs = ConfigStore.instance()
@@ -116,7 +116,7 @@ def make_ctrlnet_config_7b_training(
                     160,
                 ],
                 base_load_from=dict(
-                    load_path=os.path.join("checkpoints", COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_model_mp_*.pt")
+                    load_path=os.path.join("checkpoints", COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_mp_*.pt")
                 ),  # modify as needed. This is the TP version of base model ckpt (that's frozen during training).
                 finetune_base_model=False,
                 hint_mask=[True] * len(CTRL_HINT_KEYS_COMB[hint_key]),

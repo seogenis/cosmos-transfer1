@@ -83,7 +83,7 @@ class DiffusionModel(Model):
 
         # 3. vae
         with misc.timer("DiffusionModel: set_up_vae"):
-            self.vae: BaseVAE = lazy_instantiate(config.vae)
+            self.vae: BaseVAE = lazy_instantiate(config.tokenizer)
             assert (
                 self.vae.latent_ch == self.state_shape[0]
             ), f"latent_ch {self.vae.latent_ch} != state_shape {self.state_shape[0]}"

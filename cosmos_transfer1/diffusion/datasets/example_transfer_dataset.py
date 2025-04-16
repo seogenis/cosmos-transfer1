@@ -21,12 +21,10 @@ PYTHONPATH=. python cosmos_transfer1/diffusion/datasets/example_transfer_dataset
 import os
 import warnings
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from tqdm import tqdm
 from decord import VideoReader, cpu
 import pickle
 
@@ -79,100 +77,40 @@ class ExampleTransferDataset(Dataset):
         self.ctrl_type = hint_key.lstrip("control_input_")
         self.ctrl_data_pth_config = CTRL_TYPE_INFO[self.ctrl_type]
 
-        # Set up directories
+        # Set up directories - only collect paths
         video_dir = os.path.join(self.dataset_dir, "videos")
         self.video_paths = [os.path.join(video_dir, f) for f in os.listdir(video_dir) if f.endswith(".mp4")]
         self.t5_dir = os.path.join(self.dataset_dir, "t5_xxl")
-        print(f"{len(self.video_paths)} videos in total")
-
-        # Initialize samples
-        self.samples = self._init_samples(self.video_paths)
-        self.samples = sorted(self.samples, key=lambda x: (x["video_path"], x["frame_ids"][0]))
-        print(f"{len(self.samples)} samples in total")
+        print(f"Finish initializing dataset with {len(self.video_paths)} videos in total.")
 
         # Set up preprocessing and augmentation
-        self.wrong_number = 0
-
         augmentor_name = f"video_ctrlnet_augmentor_{hint_key}"
-        # The augmentor will process the 'raw' control input data to the tensor,
-        # add it to the data dict, and resize both the video and the control input to the model's required input size
-        # self.augmentor = AUGMENTOR_OPTIONS[augmentor_name](resolution=resolution)
         augmentor_cfg = AUGMENTOR_OPTIONS[augmentor_name](resolution=resolution)
-        # Instantiate the augmentor configuration to get the actual augmentor objects (TODO (qianlim) remove instantiate here?)
         self.augmentor = {k: instantiate(v) for k, v in augmentor_cfg.items()}
 
-    def _init_samples(self, video_paths):
-        samples = []
-        with ThreadPoolExecutor(32) as executor:
-            future_to_video_path = {
-                executor.submit(self._load_and_process_video_path, video_path): video_path
-                for video_path in video_paths
-            }
-            for future in tqdm(as_completed(future_to_video_path), total=len(video_paths)):
-                samples.extend(future.result())
-        return samples
-
-    def _load_and_process_video_path(self, video_path):
-        """
-        Function for sampling a chunk of self.sequence_length frames from the video.
-        Current version: randomly sample a chunk of self.sequence_length frames from the video each time.
-        Modify this for a different sampling strategy if needed.
-        """
+    def _sample_frames(self, video_path):
+        """Sample frames from video and get metadata"""
         vr = VideoReader(video_path, ctx=cpu(0), num_threads=2)
         n_frames = len(vr)
-        # Check if all required control files exist
-        ctrl_files_exist = True
-        video_name = os.path.basename(video_path).replace(".mp4", "")
-
-        # load control input file if needed
-        if self.ctrl_data_pth_config["folder"] is not None:
-            ctrl_path = os.path.join(
-                self.dataset_dir,
-                self.ctrl_data_pth_config["folder"],
-                f"{video_name}.{self.ctrl_data_pth_config['format']}"
-            )
-            if not os.path.exists(ctrl_path):
-                ctrl_files_exist = False
-                warnings.warn(f"Missing control input file: {ctrl_path}")
-        else:
-            ctrl_files_exist = True
-
-        samples = []
-        if not ctrl_files_exist:
-            return samples
-
-        # Calculate the maximum possible starting frame that allows for a full sequence
+        
+        # Calculate valid start frame range
         max_start_idx = n_frames - self.sequence_length
-        
         if max_start_idx < 0:  # Video is too short
-            return samples
-        
-        # Randomly select a starting frame
+            return None, None, None
+            
+        # Sample start frame
         start_frame = np.random.randint(0, max_start_idx + 1)
-    
-        sample = dict(
-            video_path=video_path,
-            t5_embedding_path=os.path.join(
-                self.t5_dir,
-                os.path.basename(video_path).replace(".mp4", ".pickle"),
-            )
-        )
-
-        if self.ctrl_data_pth_config["folder"] is not None:
-            sample["ctrl_path"] = os.path.join(
-                self.dataset_dir,
-                self.ctrl_data_pth_config["folder"],
-                f"{video_name}.{self.ctrl_data_pth_config['format']}"
-            )
-        else:
-            sample["ctrl_path"] = None
-
-        # Generate consecutive frame IDs
-        sample["frame_ids"] = list(range(start_frame, start_frame + self.sequence_length))
-        # sample["chunk_index"] = 0
-        samples.append(sample)
+        frame_ids = list(range(start_frame, start_frame + self.sequence_length))
         
-        return samples
+        # Load frames
+        frames = vr.get_batch(frame_ids).asnumpy()
+        frames = frames.astype(np.uint8)
+        try:
+            fps = vr.get_avg_fps()
+        except Exception:  # failed to read FPS
+            fps = 24
+            
+        return frames, frame_ids, fps
 
     def _load_control_data(self, sample):
         """Load control data for the video clip."""
@@ -193,7 +131,7 @@ class ExampleTransferDataset(Dataset):
                 vr = VideoReader(ctrl_path, ctx=cpu(0))
                 # Ensure the depth video has the same number of frames
                 assert len(vr) >= frame_ids[-1] + 1, \
-                    f"Depth video {ctrl_data} has fewer frames than main video"
+                    f"Depth video {ctrl_path} has fewer frames than main video"
 
                 # Load the corresponding frames
                 depth_frames = vr.get_batch(frame_ids).asnumpy()
@@ -202,96 +140,89 @@ class ExampleTransferDataset(Dataset):
                     "video": depth_frames,
                     "frame_start": frame_ids[0],
                     "frame_end": frame_ids[-1],
-                    # "chunk_index": sample["chunk_index"]
                 }
 
         except Exception as e:
-            warnings.warn(f"Failed to load control data from {ctrl_data}: {str(e)}")
+            warnings.warn(f"Failed to load control data from {ctrl_path}: {str(e)}")
             return None
 
         return data_dict
 
-    def _load_video(self, video_path, frame_ids):
-        vr = VideoReader(video_path, ctx=cpu(0), num_threads=2)
-        assert (np.array(frame_ids) < len(vr)).all()
-        assert (np.array(frame_ids) >= 0).all()
-        vr.seek(0)
-        frame_data = vr.get_batch(frame_ids).asnumpy()
-        try:
-            fps = vr.get_avg_fps()
-        except Exception:  # failed to read FPS
-            fps = 24
-        return frame_data, fps
-
-    def _get_frames(self, video_path, frame_ids):
-        frames, fps = self._load_video(video_path, frame_ids)
-        frames = frames.astype(np.uint8)
-        frames = torch.from_numpy(frames).permute(0, 3, 1, 2)  # (l, c, h, w)
-        return frames, fps
-
     def __getitem__(self, index):
-        try:
-            sample = self.samples[index]
-            video_path = sample["video_path"]
-            frame_ids = sample["frame_ids"]
+        max_retries = 3
+        for _ in range(max_retries):
+            try:
+                video_path = self.video_paths[index]
+                video_name = os.path.basename(video_path).replace(".mp4", "")
 
-            data = dict()
+                # Sample frames
+                frames, frame_ids, fps = self._sample_frames(video_path)
+                if frames is None:  # Invalid video or too short
+                    index = np.random.randint(len(self.video_paths))
+                    continue
 
-            # Load video frames
-            video, fps = self._get_frames(video_path, frame_ids)
-            video = video.permute(1, 0, 2, 3)  # Rearrange from [T, C, H, W] to [C, T, H, W]
+                data = dict()
 
-            aspect_ratio = detect_aspect_ratio((video.shape[3], video.shape[2]))  # the func expects (w, h)
-            data["aspect_ratio"] = aspect_ratio
+                # Process video frames
+                video = torch.from_numpy(frames).permute(3, 0, 1, 2)  # [T,H,W,C] -> [C,T,H,W]
+                aspect_ratio = detect_aspect_ratio((video.shape[3], video.shape[2]))  # expects (w, h)
+                
+                # Basic data
+                data["video"] = video
+                data["aspect_ratio"] = aspect_ratio
+                data["video_name"] = {
+                    "video_path": video_path,
+                    "t5_embedding_path": os.path.join(self.t5_dir, f"{video_name}.pickle"),
+                    "start_frame_id": str(frame_ids[0]),
+                }
 
-            # Basic data
-            data["video"] = video
-            data["video_name"] = {
-                "video_path": video_path,
-                "t5_embedding_path": sample["t5_embedding_path"],
-                "start_frame_id": str(frame_ids[0]),
-            }
+                # Load T5 embeddings
+                with open(data["video_name"]["t5_embedding_path"], "rb") as f:
+                    t5_embedding = pickle.load(f)[0]
+                data["t5_text_embeddings"] = torch.from_numpy(t5_embedding).cuda()
+                data["t5_text_mask"] = torch.ones(512, dtype=torch.int64).cuda()
 
-            # Load T5 embeddings
-            with open(sample["t5_embedding_path"], "rb") as f:
-                t5_embedding = pickle.load(f)[0]
-            data["t5_text_embeddings"] = torch.from_numpy(t5_embedding).cuda()
-            data["t5_text_mask"] = torch.ones(512, dtype=torch.int64).cuda()
+                # Add metadata
+                data["fps"] = fps
+                data["frame_start"] = frame_ids[0]
+                data["frame_end"] = frame_ids[-1] + 1
+                data["num_frames"] = self.sequence_length
+                data["image_size"] = torch.tensor([704, 1280, 704, 1280]).cuda()
+                data["padding_mask"] = torch.zeros(1, 704, 1280).cuda()
 
-            # Add metadata
-            data["fps"] = fps
-            data["frame_start"] = frame_ids[0]
-            data["frame_end"] = frame_ids[-1] + 1
-            # data["chunk_index"] = sample["chunk_index"]
-            data["image_size"] = torch.tensor([704, 1280, 704, 1280]).cuda()
-            data["num_frames"] = self.sequence_length
-            data["padding_mask"] = torch.zeros(1, 704, 1280).cuda()
+                if self.ctrl_type:
+                    ctrl_data = self._load_control_data({
+                        "ctrl_path": os.path.join(
+                            self.dataset_dir,
+                            self.ctrl_data_pth_config["folder"],
+                            f"{video_name}.{self.ctrl_data_pth_config['format']}"
+                        ) if self.ctrl_data_pth_config["folder"] is not None else None,
+                        "frame_ids": frame_ids
+                    })
+                    if ctrl_data is None:  # Control data loading failed
+                        index = np.random.randint(len(self.video_paths))
+                        continue
+                    data.update(ctrl_data)
 
-            if self.ctrl_type:
-                ctrl_data = self._load_control_data(sample)
-                if ctrl_data is None:  # Control data loading failed, discard this sample and reload another sample
-                    return self[np.random.randint(len(self.samples))]
-                data.update(ctrl_data)
+                    # Apply augmentations including control input processing
+                    for aug_name, aug_fn in self.augmentor.items():
+                        data = aug_fn(data)
 
-                # Apply augmentations including control input processing
-                for aug_name, aug_fn in self.augmentor.items():
-                    data = aug_fn(data)
+                return data
 
-            return data
-
-        except Exception:
-            warnings.warn(
-                f"Invalid data encountered: {self.samples[index]['video_path']}. Skipped "
-                f"(by randomly sampling another sample in the same dataset)."
-            )
-            warnings.warn("FULL TRACEBACK:")
-            warnings.warn(traceback.format_exc())
-            self.wrong_number += 1
-            print(self.wrong_number)
-            return self[np.random.randint(len(self.samples))]
+            except Exception:
+                warnings.warn(
+                    f"Invalid data encountered: {self.video_paths[index]}. Skipped "
+                    f"(by randomly sampling another sample in the same dataset)."
+                )
+                warnings.warn("FULL TRACEBACK:")
+                warnings.warn(traceback.format_exc())
+                if _ == max_retries - 1:
+                    raise RuntimeError(f"Failed to load data after {max_retries} attempts")
+                index = np.random.randint(len(self.video_paths))
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.video_paths)
 
     def __str__(self):
         return f"{len(self.video_paths)} samples from {self.dataset_dir}"
@@ -322,7 +253,7 @@ if __name__ == "__main__":
                 f"{data['frame_end']=}\n"
                 f"{data['video'].sum()=}\n"
                 f"{data['video'].shape=}\n"
-                f"{data[control_input_key].shape}={data[control_input_key].shape}\n" # should match the video shape
+                f"{data[control_input_key].shape=}\n" # should match the video shape
                 f"{data['video_name']=}\n"
                 f"{data['t5_text_embeddings'].shape=}\n"
                 "---"

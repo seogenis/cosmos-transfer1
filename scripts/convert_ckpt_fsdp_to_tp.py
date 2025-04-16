@@ -105,7 +105,7 @@ def convert_fsdp_to_tp(path_in: str, path_out: str) -> None:
     easy_io.dump({'grad_scaler': {}, 'iteration': 0}, f"{path_out}.pt")
     for i in tqdm(range(TP_SIZE)):
         state_dict = {"model": state_dicts[i]}
-        easy_io.dump(state_dict, f"{path_out}_model_mp_{i}.pt")
+        easy_io.dump(state_dict, f"{path_out}_mp_{i}.pt")
 
 
 if __name__ == "__main__":
@@ -116,9 +116,9 @@ if __name__ == "__main__":
         python convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt
 
     This will save the Tensor Parallel (TP) checkpoints as 8 files in the same directory:
-        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_model_mp_0.pt
+        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_mp_0.pt
         ...
-        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_model_mp_7.pt
+        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_mp_7.pt
     '''
     if len(sys.argv) != 2:
         print("Usage: python convert_ckpt_fsdp_to_tp.py <path_to_checkpoint.pt>")
