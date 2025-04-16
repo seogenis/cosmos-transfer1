@@ -36,7 +36,7 @@ class DataDictMerger(Augmentor):
         for key in self.input_keys:
             if key not in data_dict:
                 log.warning(
-                    f"DataDictMerger dataloader error: missing {key}, {data_dict['__url__']}, {data_dict['__key__']}",
+                    f"DataDictMerger dataloader error: missing {key}; data_dict keys: {data_dict.keys()}",
                     rank0_only=False,
                 )
                 return None

@@ -1,4 +1,4 @@
-## Training Cosmos-Transfer1 Models
+# Training Cosmos-Transfer1 Models
 In this document, we provide examples and steps to:
 - Build your own Cosmos-Transfer1 models, training from scratch; or
 - Post-train Cosmos-Transfer1 models from our checkpoint using your data.
@@ -160,7 +160,7 @@ CUDA_HOME=$CONDA_PREFIX PYTHONPATH=$(pwd) python scripts/get_t5_embeddings.py --
 ```
 
 #### 3. Obtaining the Control Input Data
-Next, we generate the control input data corresponding to each video. If you already have accurate control input data (e.g., ground truth depth, segmentation masks, or human keypoints), you can skip this step -- just ensure your files are organized in the above structure, and follow the data format as detailed below.
+Next, we generate the control input data corresponding to each video. If you already have accurate control input data (e.g., ground truth depth, segmentation masks, or human keypoints), you can skip this step -- just ensure your files are organized in the above structure, and follow the data format as detailed in [Process Control Input Data](process_control_input_data_for_training.md).
 
 Here, as an example, we show show how to obtain the control input signals from the input RGB videos. Specifically:
 
@@ -180,9 +180,9 @@ Due to the large model size, we leverage TensorParallel (TP) to split the model 
 
 ```bash
 # Will split the Base model checkpoint into 8 TP checkpoints 
-python scripts/convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/base_model.pt
-# Example: for VisControl checkpoint splitting for post-train.
-python scripts/convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt
+PYTHONPATH=. python scripts/convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/base_model.pt
+# Example: for EdgeControl checkpoint splitting for post-train.
+PYTHONPATH=. python scripts/convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/edge_control.pt
 ```
 This will generate the TP checkpoints under `checkpoints/checkpoints_tp/*_mp_*.pt`, which we load in the training below.
 

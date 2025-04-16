@@ -21,7 +21,6 @@ def get_sampler(dataset):
 def get_example_transfer_dataset(hint_key, is_train=True):
     dataset = L(ExampleTransferDataset)(
         dataset_dir="datasets/hdvila",
-        chunk_size=256,
         num_frames=121,
         resolution="720",
         hint_key=hint_key,
@@ -33,6 +32,9 @@ def get_example_transfer_dataset(hint_key, is_train=True):
         sampler=L(get_sampler)(dataset=dataset),
         batch_size=1,
         drop_last=True,
+        num_workers=8, # adjust as needed
+        prefetch_factor=2, # adjust as needed
+        pin_memory=True,
     )
 
 

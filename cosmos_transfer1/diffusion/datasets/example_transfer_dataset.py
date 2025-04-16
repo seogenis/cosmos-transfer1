@@ -32,13 +32,10 @@ import pickle
 
 from cosmos_transfer1.diffusion.datasets.augmentor_provider import AUGMENTOR_OPTIONS
 from cosmos_transfer1.diffusion.datasets.augmentors.control_input import VIDEO_RES_SIZE_INFO
+from cosmos_transfer1.diffusion.inference.inference_utils import detect_aspect_ratio
+from cosmos_transfer1.utils.lazy_config import instantiate
 
 
-CTRL_AUG_KEYS = {
-    "depth": "depth",
-    "seg": "segmentation",
-    "keypoint": "keypoint",
-}
 
 # mappings between control types and corresponding sub-folders names in the data folder
 CTRL_TYPE_INFO = {
@@ -55,22 +52,17 @@ class ExampleTransferDataset(Dataset):
     def __init__(
         self,
         dataset_dir,
-        chunk_size,
         num_frames,
         resolution,
-        start_frame_interval=1,
         hint_key="control_input_vis",
-        # augmentor_name="video_basic_augmentor",
         is_train=True
     ):
         """Dataset class for loading video-text-to-video generation data with control inputs.
 
         Args:
             dataset_dir (str): Base path to the dataset directory
-            chunk_size (int): Interval between sampled frames in a sequence.
-            num_frames (int): Number of frames to load per sequence
+            num_frames (int): Number of consecutive frames to load per sequence
             resolution (str): resolution of the target video size
-            start_frame_interval (int): Interval for starting frames
             hint_key (str): The hint key for loading the correct control input data modality
             is_train (bool): Whether this is for training
 
@@ -78,8 +70,6 @@ class ExampleTransferDataset(Dataset):
         """
         super().__init__()
         self.dataset_dir = dataset_dir
-        self.start_frame_interval = start_frame_interval
-        self.chunk_size = chunk_size
         self.sequence_length = num_frames
         self.is_train = is_train
         self.resolution = resolution
@@ -106,10 +96,10 @@ class ExampleTransferDataset(Dataset):
         augmentor_name = f"video_ctrlnet_augmentor_{hint_key}"
         # The augmentor will process the 'raw' control input data to the tensor,
         # add it to the data dict, and resize both the video and the control input to the model's required input size
-        self.augmentor = AUGMENTOR_OPTIONS[augmentor_name](
-            resolution=resolution,
-            append_fps_frames=False
-        )
+        # self.augmentor = AUGMENTOR_OPTIONS[augmentor_name](resolution=resolution)
+        augmentor_cfg = AUGMENTOR_OPTIONS[augmentor_name](resolution=resolution)
+        # Instantiate the augmentor configuration to get the actual augmentor objects (TODO (qianlim) remove instantiate here?)
+        self.augmentor = {k: instantiate(v) for k, v in augmentor_cfg.items()}
 
     def _init_samples(self, video_paths):
         samples = []
@@ -123,9 +113,13 @@ class ExampleTransferDataset(Dataset):
         return samples
 
     def _load_and_process_video_path(self, video_path):
+        """
+        Function for sampling a chunk of self.sequence_length frames from the video.
+        Current version: randomly sample a chunk of self.sequence_length frames from the video each time.
+        Modify this for a different sampling strategy if needed.
+        """
         vr = VideoReader(video_path, ctx=cpu(0), num_threads=2)
         n_frames = len(vr)
-
         # Check if all required control files exist
         ctrl_files_exist = True
         video_name = os.path.basename(video_path).replace(".mp4", "")
@@ -147,36 +141,37 @@ class ExampleTransferDataset(Dataset):
         if not ctrl_files_exist:
             return samples
 
-        for frame_i in range(0, n_frames, self.start_frame_interval):
-            sample = dict()
-            sample["video_path"] = video_path
-            sample["t5_embedding_path"] = os.path.join(
+        # Calculate the maximum possible starting frame that allows for a full sequence
+        max_start_idx = n_frames - self.sequence_length
+        
+        if max_start_idx < 0:  # Video is too short
+            return samples
+        
+        # Randomly select a starting frame
+        start_frame = np.random.randint(0, max_start_idx + 1)
+    
+        sample = dict(
+            video_path=video_path,
+            t5_embedding_path=os.path.join(
                 self.t5_dir,
                 os.path.basename(video_path).replace(".mp4", ".pickle"),
             )
+        )
 
-            if self.ctrl_data_pth_config["folder"] is not None:
-                sample["ctrl_path"] = os.path.join(
-                    self.dataset_dir,
-                    self.ctrl_data_pth_config["folder"],
-                    f"{video_name}.{self.ctrl_data_pth_config['format']}"
-                )
-            else:
-                sample["ctrl_path"] = None
+        if self.ctrl_data_pth_config["folder"] is not None:
+            sample["ctrl_path"] = os.path.join(
+                self.dataset_dir,
+                self.ctrl_data_pth_config["folder"],
+                f"{video_name}.{self.ctrl_data_pth_config['format']}"
+            )
+        else:
+            sample["ctrl_path"] = None
 
-            sample["frame_ids"] = []
-            sample["chunk_index"] = -1
-            curr_frame_i = frame_i
-            while True:
-                if curr_frame_i > (n_frames - 1):
-                    break
-                sample["frame_ids"].append(curr_frame_i)
-                if len(sample["frame_ids"]) == self.sequence_length:
-                    break
-                curr_frame_i += self.chunk_size
-            if len(sample["frame_ids"]) == self.sequence_length:
-                sample["chunk_index"] += 1
-                samples.append(sample)
+        # Generate consecutive frame IDs
+        sample["frame_ids"] = list(range(start_frame, start_frame + self.sequence_length))
+        # sample["chunk_index"] = 0
+        samples.append(sample)
+        
         return samples
 
     def _load_control_data(self, sample):
@@ -207,7 +202,7 @@ class ExampleTransferDataset(Dataset):
                     "video": depth_frames,
                     "frame_start": frame_ids[0],
                     "frame_end": frame_ids[-1],
-                    "chunk_index": sample["chunk_index"]
+                    # "chunk_index": sample["chunk_index"]
                 }
 
         except Exception as e:
@@ -232,8 +227,6 @@ class ExampleTransferDataset(Dataset):
         frames, fps = self._load_video(video_path, frame_ids)
         frames = frames.astype(np.uint8)
         frames = torch.from_numpy(frames).permute(0, 3, 1, 2)  # (l, c, h, w)
-        frames = self.preprocess(frames)
-        frames = torch.clamp(frames * 255.0, 0, 255).to(torch.uint8)
         return frames, fps
 
     def __getitem__(self, index):
@@ -247,6 +240,9 @@ class ExampleTransferDataset(Dataset):
             # Load video frames
             video, fps = self._get_frames(video_path, frame_ids)
             video = video.permute(1, 0, 2, 3)  # Rearrange from [T, C, H, W] to [C, T, H, W]
+
+            aspect_ratio = detect_aspect_ratio((video.shape[3], video.shape[2]))  # the func expects (w, h)
+            data["aspect_ratio"] = aspect_ratio
 
             # Basic data
             data["video"] = video
@@ -265,8 +261,8 @@ class ExampleTransferDataset(Dataset):
             # Add metadata
             data["fps"] = fps
             data["frame_start"] = frame_ids[0]
-            data["frame_end"] = frame_ids[-1]
-            data["chunk_index"] = sample["chunk_index"]
+            data["frame_end"] = frame_ids[-1] + 1
+            # data["chunk_index"] = sample["chunk_index"]
             data["image_size"] = torch.tensor([704, 1280, 704, 1280]).cuda()
             data["num_frames"] = self.sequence_length
             data["padding_mask"] = torch.zeros(1, 704, 1280).cuda()
@@ -302,28 +298,38 @@ class ExampleTransferDataset(Dataset):
 
 
 if __name__ == "__main__":
+    '''
+    Sanity check for the dataset.
+    '''
+    control_input_key = "control_input_edge"
+    visualize_control_input = False
+
     dataset = ExampleTransferDataset(
-        dataset_dir="assets/hdvila/",
-        hint_key="control_input_seg",
-        chunk_size=1,
+        dataset_dir="datasets/hdvila/",
+        hint_key=control_input_key,
         num_frames=121,
         resolution="720",
-        # augmentor_name="video_basic_augmentor",
         is_train=True
     )
-
-    indices = [0, 13, 200, -1]
+    print("finished init dataset")
+    indices = [0, 12, 100, -1]
     for idx in indices:
         data = dataset[idx]
         print(
             (
                 f"{idx=} "
+                f"{data['frame_start']=}\n"
+                f"{data['frame_end']=}\n"
                 f"{data['video'].sum()=}\n"
                 f"{data['video'].shape=}\n"
-                f"{data['depth']['video'].sum()=}\n"
-                f"{data['depth']['video'].shape=}\n"
+                f"{data[control_input_key].shape}={data[control_input_key].shape}\n" # should match the video shape
                 f"{data['video_name']=}\n"
                 f"{data['t5_text_embeddings'].shape=}\n"
                 "---"
             )
         )
+        if visualize_control_input:
+            import imageio
+            control_input_tensor = data[control_input_key].permute(1, 2, 3, 0).cpu().numpy()
+            video_name = "control_input_edge.mp4"
+            imageio.mimsave(video_name, control_input_tensor, fps=24)

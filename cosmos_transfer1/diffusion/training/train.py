@@ -59,7 +59,7 @@ def destroy_distributed():
 def launch(config: Config, args: argparse.Namespace) -> None:
     # Check that the config is valid
     config.validate()
-    if config.trainer.timestamp_seed:  # TODO (qianlim): check if this is set in the config yaml
+    if config.trainer.timestamp_seed:
         # Get the current time in microseconds
         current_time = int(time.time() * 1e6)
         # Combine the current time with worker_id to ensure different seeds across workers

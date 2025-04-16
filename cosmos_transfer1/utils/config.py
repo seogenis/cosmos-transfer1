@@ -272,6 +272,8 @@ class TrainerConfig:
     memory_format: torch.memory_format = torch.preserve_format
     # Gradient accumulation (update step every N iteration).
     grad_accum_iter: int = 1
+    # Whether to use the timestamp as the seed. Needed to ensure real randomness in loading data.
+    timestamp_seed: bool = True
     # # Profiling config
     # profiling: Profiling = attrs.field(factory=Profiling)
 

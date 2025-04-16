@@ -23,6 +23,7 @@ from tqdm import tqdm
 from collections import OrderedDict
 from typing import Dict, Any, List
 
+from cosmos_transfer1.utils import log
 from cosmos_transfer1.utils.easy_io import easy_io
 
 
@@ -54,7 +55,7 @@ def native_to_tp(reg_state_dict: Dict[str, Any], tp_size: int) -> List[OrderedDi
         A list of OrderedDicts, each representing a tensor parallel partition.
     """
     tp_state_dict = [OrderedDict() for _ in range(tp_size)]
-
+    log.info("Converting to TP checkpoint..")
     for key, value in reg_state_dict.items():
         if key.endswith("_extra_state"):
             continue
@@ -87,9 +88,11 @@ def convert_fsdp_to_tp(path_in: str, path_out: str) -> None:
         RuntimeError: For other conversion errors
     """
     try:
+        log.info(f"Loading checkpoint from {path_in}..")
         native_ckpt = torch.load(
             path_in,
             map_location=torch.device("cpu"),
+            weights_only=False,  # Load to CPU first; weights_only=False required for newer PyTorch versions
         )
         state_dicts = native_to_tp(native_ckpt, TP_SIZE)
     except FileNotFoundError:
@@ -97,9 +100,12 @@ def convert_fsdp_to_tp(path_in: str, path_out: str) -> None:
     except Exception as e:
         raise RuntimeError(f"Error loading checkpoint: {str(e)}")
 
+    log.info("Saving TP checkpoints..")
+    # Add a dummy grad_scaler and iteration to the checkpoint. Required by the training script.
+    easy_io.dump({'grad_scaler': {}, 'iteration': 0}, f"{path_out}.pt")
     for i in tqdm(range(TP_SIZE)):
         state_dict = {"model": state_dicts[i]}
-        easy_io.dump(state_dict, f"{path_out}_mp_{i}.pt")
+        easy_io.dump(state_dict, f"{path_out}_model_mp_{i}.pt")
 
 
 if __name__ == "__main__":
@@ -110,9 +116,9 @@ if __name__ == "__main__":
         python convert_ckpt_fsdp_to_tp.py checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control.pt
 
     This will save the Tensor Parallel (TP) checkpoints as 8 files in the same directory:
-        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_mp_0.pt
+        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_model_mp_0.pt
         ...
-        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_mp_7.pt
+        checkpoints/nvidia/Cosmos-Transfer1-7B/vis_control_model_mp_7.pt
     '''
     if len(sys.argv) != 2:
         print("Usage: python convert_ckpt_fsdp_to_tp.py <path_to_checkpoint.pt>")

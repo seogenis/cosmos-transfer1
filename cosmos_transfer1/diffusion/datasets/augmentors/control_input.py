@@ -20,7 +20,7 @@ from typing import Any, Optional
 import cv2
 import matplotlib.colors as mcolors
 import numpy as np
-import pycocotools
+import pycocotools.mask
 import torch
 import torchvision.transforms.functional as transforms_F
 

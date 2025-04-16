@@ -53,12 +53,8 @@ def obtain_augmentation_size(data_dict: dict, augmentor_cfg: dict) -> Union[int,
     Returns:
         aug_size (int): Size of augmentation
     """
-    if "__url__" in data_dict and "aspect_ratio" in data_dict["__url__"].meta.opts:
-        aspect_ratio = data_dict["__url__"].meta.opts["aspect_ratio"]
-        aug_size = augmentor_cfg["size"][aspect_ratio]
-    else:  # Non-webdataset format
-        aspect_ratio = data_dict["aspect_ratio"]
-        aug_size = augmentor_cfg["size"][aspect_ratio]
+    aspect_ratio = data_dict["aspect_ratio"]
+    aug_size = augmentor_cfg["size"][aspect_ratio]
     return aug_size
 
 

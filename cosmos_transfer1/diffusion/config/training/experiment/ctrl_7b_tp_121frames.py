@@ -116,7 +116,7 @@ def make_ctrlnet_config_7b_training(
                     160,
                 ],
                 base_load_from=dict(
-                    load_path=os.path.join(COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_mp_*.pt")
+                    load_path=os.path.join("checkpoints", COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_model_mp_*.pt")
                 ),  # modify as needed. This is the TP version of base model ckpt (that's frozen during training).
                 finetune_base_model=False,
                 hint_mask=[True] * len(CTRL_HINT_KEYS_COMB[hint_key]),
@@ -189,11 +189,10 @@ for key in CTRL_HINT_KEYS_COMB.keys():
 
     # Register experiments for post-training from TP checkpoints.
     hint_key_short = key.replace("control_input_", "")  # "control_input_vis" -> "vis"
-    base_ckpt_path = default_model_names[hint_key_short]
-    tp_ckpt_path = os.path.join(os.path.dirname(base_ckpt_path), "checkpoints_tp", os.path.basename(base_ckpt_path))
+    pretrain_ckpt_path = default_model_names[hint_key_short]
+    # note: The TP ckpt path are specified as <name>.pt to the script, but actually the <name>_model_mp_*.pt files will be loaded.
+    tp_ckpt_path = os.path.join("checkpoints", os.path.dirname(pretrain_ckpt_path), "checkpoints_tp", os.path.basename(pretrain_ckpt_path))
     config = make_ctrlnet_config_7b_training(hint_key=key, num_control_blocks=num_control_blocks, pretrain_model_path=tp_ckpt_path)
-    print(tp_ckpt_path, '=======\n\n')
-    import ipdb; ipdb.set_trace()
     cs.store(
         group="experiment",
         package="_global_",

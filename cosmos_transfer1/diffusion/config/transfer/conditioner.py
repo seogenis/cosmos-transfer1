@@ -65,6 +65,13 @@ SS_CTRL_HINT_KEYS = [
     "control_input_upscale",
 ]
 
+# for data loading. Defining corresponding sub-folders in the data folder
+CTRL_AUG_KEYS = {
+    "depth": "depth",
+    "seg": "segmentation",
+    "keypoint": "keypoint",
+}
+
 
 BaseVideoConditionerWithCtrlConfig: LazyDict = L(VideoConditionerWithCtrl)(
     text=TextConfig(),

@@ -28,8 +28,8 @@ from cosmos_transfer1.diffusion.config.transfer.conditioner import (
     CTRL_HINT_KEYS,
     CTRL_HINT_KEYS_COMB,
 )
-from cosmos_transfer1.diffusion.datasets.example_transfer_dataset import CTRL_AUG_KEYS
-from cosmos_transfer1.diffusion.config.transfer.blurs import BlurAugmentorConfig
+from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_AUG_KEYS
+from cosmos_transfer1.diffusion.config.transfer.blurs import BlurAugmentorConfig, random_blur_config
 
 
 AUGMENTOR_OPTIONS = {}
@@ -46,7 +46,6 @@ def augmentor_register(key):
 @augmentor_register("video_basic_augmentor")
 def get_video_augmentor(
     resolution: str,
-    append_fps_frames: str = False,
     blur_config=None,
 ):
     return {
@@ -56,7 +55,6 @@ def get_video_augmentor(
                 "video",
                 "fps",
                 "num_frames",
-                "chunk_index",
                 "frame_start",
                 "frame_end",
                 "orig_num_frames",
@@ -83,7 +81,7 @@ for hint_key in CTRL_HINT_KEYS:
     def get_video_ctrlnet_augmentor(hint_key, use_random=True):
         def _get_video_ctrlnet_augmentor(
             resolution: str,
-            blur_config: BlurAugmentorConfig,
+            blur_config: BlurAugmentorConfig = random_blur_config,
         ):
             if hint_key == "control_input_keypoint":
                 add_control_input = L(AddControlInputComb)(
@@ -118,7 +116,6 @@ for hint_key in CTRL_HINT_KEYS:
                 "video",
                 "fps",
                 "num_frames",
-                "chunk_index",
                 "frame_start",
                 "frame_end",
                 "orig_num_frames",
@@ -127,11 +124,12 @@ for hint_key in CTRL_HINT_KEYS:
                 if key in hint_key:
                     input_keys.append(value)
                     output_keys.append(value)
+
             augmentation = {
-                "merge_datadict": L(DataDictMerger)(
-                    input_keys=input_keys,
-                    output_keys=output_keys,
-                ),
+                # "merge_datadict": L(DataDictMerger)(
+                #     input_keys=input_keys,
+                #     output_keys=output_keys,
+                # ),
                 # this addes the control input tensor to the data dict
                 "add_control_input": add_control_input,
                 # this resizes both the video and the control input to the model's required input size
