@@ -86,7 +86,7 @@ class Trainer:
         if distributed.is_rank0():
             # Print important environment variables and the effective config.
             log.info("Config:\n" + config.pretty_print(use_color=True))
-        misc.print_environ_variables(["TORCH_HOME", "OUTPUT_ROOT"])
+        misc.print_environ_variables(["OUTPUT_ROOT"])
         # Set the random seed. If multi-GPU, different ranks are set with different seeds.
         misc.set_random_seed(seed=config.trainer.seed, by_rank=True)
         # Initialize cuDNN.

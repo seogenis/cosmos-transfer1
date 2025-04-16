@@ -25,5 +25,6 @@ BASIC_CALLBACKS = dict(
     progress_bar=L(ProgressBarCallback)(),
     grad_clip=L(GradClip)(fsdp_enabled=True, model_key="model"),
     low_prec=L(LowPrecisionCallback)(config=PLACEHOLDER, trainer=PLACEHOLDER, update_iter=1),
+    # for the first 1000 iterations, log the iteration speed per iteration, after that, log every 200 iterations
     iter_speed=L(IterSpeed)(every_n=200, hit_thres=1000),
 )

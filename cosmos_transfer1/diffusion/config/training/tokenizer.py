@@ -41,8 +41,7 @@ def get_cosmos_diffusion_tokenizer_comp8x8x8(resolution: str, chunk_duration: in
     temporal_compression_factor = 8
     spatial_compression_factor = 8
 
-    return L(JointImageVideoSharedJITTokenizer)(
-        video_vae=L(VideoJITTokenizer)(
+    return L(VideoJITTokenizer)(
             name="cosmos_1_0_diffusion_tokenizer",
             enc_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/encoder.jit",
             dec_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/decoder.jit",
@@ -53,16 +52,30 @@ def get_cosmos_diffusion_tokenizer_comp8x8x8(resolution: str, chunk_duration: in
             temporal_compression_factor=temporal_compression_factor,
             spatial_compression_factor=spatial_compression_factor,
             spatial_resolution=resolution,
-        ),
-        image_vae=L(JITVAE)(
-            name="cosmos_1_0_diffusion_tokenizer",
-            enc_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/encoder.jit",
-            dec_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/decoder.jit",
-            mean_std_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/mean_std.pt",
-            latent_ch=16,
-            is_image=False,
-            is_bf16=True,
-        ),
-        name="cosmos_1_0_diffusion_tokenizer",
-        latent_ch=16,
     )
+
+    # return L(JointImageVideoSharedJITTokenizer)(
+    #     video_vae=L(VideoJITTokenizer)(
+    #         name="cosmos_1_0_diffusion_tokenizer",
+    #         enc_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/encoder.jit",
+    #         dec_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/decoder.jit",
+    #         mean_std_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/mean_std.pt",
+    #         latent_ch=16,
+    #         is_bf16=True,
+    #         pixel_chunk_duration=pixel_chunk_duration,
+    #         temporal_compression_factor=temporal_compression_factor,
+    #         spatial_compression_factor=spatial_compression_factor,
+    #         spatial_resolution=resolution,
+    #     ),
+    #     image_vae=L(JITVAE)(
+    #         name="cosmos_1_0_diffusion_tokenizer",
+    #         enc_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/encoder.jit",
+    #         dec_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/decoder.jit",
+    #         mean_std_fp="checkpoints/nvidia/Cosmos-Tokenize1-CV8x8x8-720p/mean_std.pt",
+    #         latent_ch=16,
+    #         is_image=False,
+    #         is_bf16=True,
+    #     ),
+    #     name="cosmos_1_0_diffusion_tokenizer",
+    #     latent_ch=16,
+    # )

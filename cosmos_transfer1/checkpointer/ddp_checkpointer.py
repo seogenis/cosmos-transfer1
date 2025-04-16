@@ -171,7 +171,8 @@ class Checkpointer(AbstractCheckpointer):
                         item.save_path,
                         fast_backend=True,  # optional for fast backend, cpu heavy
                     )
-                    self.print(f"Saved {key} to {item.save_path}")
+                    abs_path = os.path.abspath(item.save_path)
+                    self.print(f"Saved {key} to {item.save_path}, abspath = {abs_path}")
                 except Exception as e:
                     self.print(f"Failed to save {key} to {item.save_path}: {str(e)}")
                     raise  # Re-raise the exception after logging

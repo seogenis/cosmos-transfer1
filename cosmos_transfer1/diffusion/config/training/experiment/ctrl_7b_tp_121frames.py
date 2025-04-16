@@ -90,14 +90,14 @@ def make_ctrlnet_config_7b_training(
             checkpoint=dict(
                 load_path=pretrain_model_path,  # Modify load_path as needed if you do post-training (fine-tuning). If training from scratch, leave it empty.
                 broadcast_via_filesystem=True,
-                save_iter=1000,
+                save_iter=1000,  # 1000 iterations per checkpoint. Update as needed.
                 load_training_state=False,
                 strict_resume=True,
                 keys_not_to_resume=[],
             ),
             trainer=dict(
                 distributed_parallelism="ddp",
-                logging_iter=200,
+                logging_iter=200,  # will log iter speed, loss, etc. every 200 iterations. (Will log per-iteration speed for the first 1000 iterations.)
                 max_iter=999_999_999,
                 timestamp_seed=True,
             ),
@@ -111,12 +111,12 @@ def make_ctrlnet_config_7b_training(
                 loss_reduce='mean',
                 latent_shape=[
                     16,
-                    (num_frames - 1) // 8 + 1,
+                    (num_frames - 1) // 8 + 1,  # for 121 frames, this is 16
                     88,
                     160,
                 ],
                 base_load_from=dict(
-                    load_path=os.path.join("checkpoints", COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_mp_*.pt")
+                    load_path=os.path.join("checkpoints", COSMOS_TRANSFER1_7B_CHECKPOINT, "checkpoints_tp", "base_model_model_mp_*.pt")
                 ),  # modify as needed. This is the TP version of base model ckpt (that's frozen during training).
                 finetune_base_model=False,
                 hint_mask=[True] * len(CTRL_HINT_KEYS_COMB[hint_key]),

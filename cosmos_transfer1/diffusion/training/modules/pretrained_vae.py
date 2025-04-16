@@ -126,6 +126,157 @@ class VideoTokenizerInterface(ABC):
         return False
 
 
+class BasePretrainedVideoTokenizer(ABC):
+    """
+    Base class for a pretrained video tokenizer that handles chunking of video data for efficient processing.
+
+    Args:
+        pixel_chunk_duration (int): The duration (in number of frames) of each chunk of video data at the pixel level.
+        temporal_compress_factor (int): The factor by which the video data is temporally compressed during processing.
+        max_enc_batch_size (int): The maximum batch size to process in one go during encoding to avoid memory overflow.
+        max_dec_batch_size (int): The maximum batch size to process in one go during decoding to avoid memory overflow.
+
+    The class introduces parameters for managing temporal chunks (`pixel_chunk_duration` and `temporal_compress_factor`)
+    which define how video data is subdivided and compressed during the encoding and decoding processes. The
+    `max_enc_batch_size` and `max_dec_batch_size` parameters allow processing in smaller batches to handle memory
+    constraints.
+    """
+
+    def __init__(
+        self,
+        pixel_chunk_duration: int = 17,
+        temporal_compress_factor: int = 8,
+        max_enc_batch_size: int = 8,
+        max_dec_batch_size: int = 4,
+    ):
+        self._pixel_chunk_duration = pixel_chunk_duration
+        self._temporal_compress_factor = temporal_compress_factor
+        self.max_enc_batch_size = max_enc_batch_size
+        self.max_dec_batch_size = max_dec_batch_size
+
+    def register_mean_std(self, mean_std_fp: str) -> None:
+        latent_mean, latent_std = torch.load(mean_std_fp, map_location="cuda", weights_only=True)
+        latent_mean = latent_mean.view(self.latent_ch, -1)[:, : self.latent_chunk_duration]
+        latent_std = latent_std.view(self.latent_ch, -1)[:, : self.latent_chunk_duration]
+
+        target_shape = [1, self.latent_ch, self.latent_chunk_duration, 1, 1]
+
+        self.register_buffer(
+            "latent_mean",
+            latent_mean.to(self.dtype).reshape(*target_shape),
+            persistent=False,
+        )
+        self.register_buffer(
+            "latent_std",
+            latent_std.to(self.dtype).reshape(*target_shape),
+            persistent=False,
+        )
+
+    def transform_encode_state_shape(self, state: torch.Tensor) -> torch.Tensor:
+        """
+        Rearranges the input state tensor to the required shape for encoding video data. Mainly for chunk based encoding
+        """
+        B, C, T, H, W = state.shape
+        assert (
+            T % self.pixel_chunk_duration == 0
+        ), f"Temporal dimension {T} is not divisible by chunk_length {self.pixel_chunk_duration}"
+        return rearrange(state, "b c (n t) h w -> (b n) c t h w", t=self.pixel_chunk_duration)
+
+    def transform_decode_state_shape(self, latent: torch.Tensor) -> None:
+        B, _, T, _, _ = latent.shape
+        assert (
+            T % self.latent_chunk_duration == 0
+        ), f"Temporal dimension {T} is not divisible by chunk_length {self.latent_chunk_duration}"
+        return rearrange(latent, "b c (n t) h w -> (b n) c t h w", t=self.latent_chunk_duration)
+
+    @torch.no_grad()
+    def encode(self, state: torch.Tensor) -> torch.Tensor:
+        if self._temporal_compress_factor == 1:
+            _, _, origin_T, _, _ = state.shape
+            state = rearrange(state, "b c t h w -> (b t) c 1 h w")
+        B, C, T, H, W = state.shape
+        state = self.transform_encode_state_shape(state)
+        # use max_enc_batch_size to avoid OOM
+        if state.shape[0] > self.max_enc_batch_size:
+            latent = []
+            for i in range(0, state.shape[0], self.max_enc_batch_size):
+                latent.append(super().encode(state[i : i + self.max_enc_batch_size]))
+            latent = torch.cat(latent, dim=0)
+        else:
+            latent = super().encode(state)
+
+        latent = rearrange(latent, "(b n) c t h w -> b c (n t) h w", b=B)
+        if self._temporal_compress_factor == 1:
+            latent = rearrange(latent, "(b t) c 1 h w -> b c t h w", t=origin_T)
+        return latent
+
+    @torch.no_grad()
+    def decode(self, latent: torch.Tensor) -> torch.Tensor:
+        """
+        Decodes a batch of latent representations into video frames by applying temporal chunking. Similar to encode,
+        it handles video data by processing smaller temporal chunks to reconstruct the original video dimensions.
+
+        It can also decode single frame image data.
+
+        Args:
+            latent (torch.Tensor): The latent space tensor containing encoded video data.
+
+        Returns:
+            torch.Tensor: The decoded video tensor reconstructed from latent space.
+        """
+        if self._temporal_compress_factor == 1:
+            _, _, origin_T, _, _ = latent.shape
+            latent = rearrange(latent, "b c t h w -> (b t) c 1 h w")
+        B, _, T, _, _ = latent.shape
+        latent = self.transform_decode_state_shape(latent)
+        # use max_enc_batch_size to avoid OOM
+        if latent.shape[0] > self.max_dec_batch_size:
+            state = []
+            for i in range(0, latent.shape[0], self.max_dec_batch_size):
+                state.append(super().decode(latent[i : i + self.max_dec_batch_size]))
+            state = torch.cat(state, dim=0)
+        else:
+            state = super().decode(latent)
+        assert state.shape[2] == self.pixel_chunk_duration
+        state = rearrange(state, "(b n) c t h w -> b c (n t) h w", b=B)
+        if self._temporal_compress_factor == 1:
+            return rearrange(state, "(b t) c 1 h w -> b c t h w", t=origin_T)
+        return state
+
+    @property
+    def pixel_chunk_duration(self) -> int:
+        return self._pixel_chunk_duration
+
+    @property
+    def latent_chunk_duration(self) -> int:
+        # return self._latent_chunk_duration
+        assert (self.pixel_chunk_duration - 1) % self.temporal_compression_factor == 0, (
+            f"Pixel chunk duration {self.pixel_chunk_duration} is not divisible by latent chunk duration "
+            f"{self.latent_chunk_duration}"
+        )
+        return (self.pixel_chunk_duration - 1) // self.temporal_compression_factor + 1
+
+    @property
+    def temporal_compression_factor(self):
+        return self._temporal_compress_factor
+
+    def get_latent_num_frames(self, num_pixel_frames: int) -> int:
+        if num_pixel_frames == 1:
+            return 1
+        assert (
+            num_pixel_frames % self.pixel_chunk_duration == 0
+        ), f"Temporal dimension {num_pixel_frames} is not divisible by chunk_length {self.pixel_chunk_duration}"
+        return num_pixel_frames // self.pixel_chunk_duration * self.latent_chunk_duration
+
+    def get_pixel_num_frames(self, num_latent_frames: int) -> int:
+        if num_latent_frames == 1:
+            return 1
+        assert (
+            num_latent_frames % self.latent_chunk_duration == 0
+        ), f"Temporal dimension {num_latent_frames} is not divisible by chunk_length {self.latent_chunk_duration}"
+        return num_latent_frames // self.latent_chunk_duration * self.pixel_chunk_duration
+
+
 class BasePretrainedImageVAE(BaseVAE):
     """
     A base class for pretrained Variational Autoencoder (VAE) that loads mean and standard deviation values
@@ -377,231 +528,81 @@ class JITVAE(BasePretrainedImageVAE):
 #         self.vae.to(self.dtype)
 
 
-class SDVAE(BaseVAE):
-    def __init__(self, batch_size=16, count_std: bool = False, is_downsample: bool = True) -> None:
-        super().__init__(channel=4, name="sd_vae")
-        self.dtype = torch.bfloat16
-        self.register_buffer(
-            "scale",
-            torch.tensor([4.17, 4.62, 3.71, 3.28], dtype=self.dtype).reciprocal().reshape(1, -1, 1, 1),
-            persistent=False,
-        )
-        self.register_buffer(
-            "bias",
-            -1.0 * torch.tensor([5.81, 3.25, 0.12, -2.15], dtype=self.dtype).reshape(1, -1, 1, 1) * self.scale,
-            persistent=False,
-        )
-        self.batch_size = batch_size
-        self.count_std = count_std
-        self.is_downsample = is_downsample
-        self.load_vae()
-        self.reset_dtype()
+# class SDVAE(BaseVAE):
+#     def __init__(self, batch_size=16, count_std: bool = False, is_downsample: bool = True) -> None:
+#         super().__init__(channel=4, name="sd_vae")
+#         self.dtype = torch.bfloat16
+#         self.register_buffer(
+#             "scale",
+#             torch.tensor([4.17, 4.62, 3.71, 3.28], dtype=self.dtype).reciprocal().reshape(1, -1, 1, 1),
+#             persistent=False,
+#         )
+#         self.register_buffer(
+#             "bias",
+#             -1.0 * torch.tensor([5.81, 3.25, 0.12, -2.15], dtype=self.dtype).reshape(1, -1, 1, 1) * self.scale,
+#             persistent=False,
+#         )
+#         self.batch_size = batch_size
+#         self.count_std = count_std
+#         self.is_downsample = is_downsample
+#         self.load_vae()
+#         self.reset_dtype()
 
-    def reset_dtype(self, *args, **kwargs):
-        del args, kwargs
-        self.vae.to(self.dtype)
+#     def reset_dtype(self, *args, **kwargs):
+#         del args, kwargs
+#         self.vae.to(self.dtype)
 
-    @rank0_first
-    def load_vae(self) -> None:
-        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-        import diffusers
+#     @rank0_first
+#     def load_vae(self) -> None:
+#         os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+#         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+#         import diffusers
 
-        vae_name = "stabilityai/sd-vae-ft-mse"
-        try:
-            vae = diffusers.models.AutoencoderKL.from_pretrained(vae_name, local_files_only=True)
-        except:  # noqa: E722
-            # Could not load the model from cache; try without local_files_only.
-            vae = diffusers.models.AutoencoderKL.from_pretrained(vae_name)
-        self.vae = vae.eval().requires_grad_(False)
+#         vae_name = "stabilityai/sd-vae-ft-mse"
+#         try:
+#             vae = diffusers.models.AutoencoderKL.from_pretrained(vae_name, local_files_only=True)
+#         except:  # noqa: E722
+#             # Could not load the model from cache; try without local_files_only.
+#             vae = diffusers.models.AutoencoderKL.from_pretrained(vae_name)
+#         self.vae = vae.eval().requires_grad_(False)
 
-    @torch.no_grad()
-    def encode(self, state: torch.Tensor) -> torch.Tensor:
-        """
-        state : pixel range [-1, 1]
-        """
-        if self.is_downsample:
-            _h, _w = state.shape[-2:]
-            state = F.interpolate(state, size=(_h // 2, _w // 2), mode="bilinear", align_corners=False)
-        in_dtype = state.dtype
-        state = state.to(self.dtype)
-        state = (state + 1.0) / 2.0
-        latent_dist = self.vae.encode(state)["latent_dist"]
-        mean, std = latent_dist.mean, latent_dist.std
-        if self.count_std:
-            latent = mean + torch.randn_like(mean) * std
-        else:
-            latent = mean
-        latent = latent * self.scale
-        latent = latent + self.bias
-        return latent.to(in_dtype)
+#     @torch.no_grad()
+#     def encode(self, state: torch.Tensor) -> torch.Tensor:
+#         """
+#         state : pixel range [-1, 1]
+#         """
+#         if self.is_downsample:
+#             _h, _w = state.shape[-2:]
+#             state = F.interpolate(state, size=(_h // 2, _w // 2), mode="bilinear", align_corners=False)
+#         in_dtype = state.dtype
+#         state = state.to(self.dtype)
+#         state = (state + 1.0) / 2.0
+#         latent_dist = self.vae.encode(state)["latent_dist"]
+#         mean, std = latent_dist.mean, latent_dist.std
+#         if self.count_std:
+#             latent = mean + torch.randn_like(mean) * std
+#         else:
+#             latent = mean
+#         latent = latent * self.scale
+#         latent = latent + self.bias
+#         return latent.to(in_dtype)
 
-    @torch.no_grad()
-    def decode(self, latent: torch.Tensor) -> torch.Tensor:
-        in_dtype = latent.dtype
-        latent = latent.to(self.dtype)
-        latent = latent - self.bias
-        latent = latent / self.scale
-        latent = torch.cat([self.vae.decode(batch)["sample"] for batch in latent.split(self.batch_size)])
-        if self.is_downsample:
-            _h, _w = latent.shape[-2:]
-            latent = F.interpolate(latent, size=(_h * 2, _w * 2), mode="bilinear", align_corners=False)
-        return latent.to(in_dtype) * 2 - 1.0
+#     @torch.no_grad()
+#     def decode(self, latent: torch.Tensor) -> torch.Tensor:
+#         in_dtype = latent.dtype
+#         latent = latent.to(self.dtype)
+#         latent = latent - self.bias
+#         latent = latent / self.scale
+#         latent = torch.cat([self.vae.decode(batch)["sample"] for batch in latent.split(self.batch_size)])
+#         if self.is_downsample:
+#             _h, _w = latent.shape[-2:]
+#             latent = F.interpolate(latent, size=(_h * 2, _w * 2), mode="bilinear", align_corners=False)
+#         return latent.to(in_dtype) * 2 - 1.0
 
-    @property
-    def spatial_compression_factor(self) -> int:
-        return 8
+#     @property
+#     def spatial_compression_factor(self) -> int:
+#         return 8
 
-
-class BasePretrainedVideoTokenizer(ABC):
-    """
-    Base class for a pretrained video tokenizer that handles chunking of video data for efficient processing.
-
-    Args:
-        pixel_chunk_duration (int): The duration (in number of frames) of each chunk of video data at the pixel level.
-        temporal_compress_factor (int): The factor by which the video data is temporally compressed during processing.
-        max_enc_batch_size (int): The maximum batch size to process in one go during encoding to avoid memory overflow.
-        max_dec_batch_size (int): The maximum batch size to process in one go during decoding to avoid memory overflow.
-
-    The class introduces parameters for managing temporal chunks (`pixel_chunk_duration` and `temporal_compress_factor`)
-    which define how video data is subdivided and compressed during the encoding and decoding processes. The
-    `max_enc_batch_size` and `max_dec_batch_size` parameters allow processing in smaller batches to handle memory
-    constraints.
-    """
-
-    def __init__(
-        self,
-        pixel_chunk_duration: int = 17,
-        temporal_compress_factor: int = 8,
-        max_enc_batch_size: int = 8,
-        max_dec_batch_size: int = 4,
-    ):
-        self._pixel_chunk_duration = pixel_chunk_duration
-        self._temporal_compress_factor = temporal_compress_factor
-        self.max_enc_batch_size = max_enc_batch_size
-        self.max_dec_batch_size = max_dec_batch_size
-
-    def register_mean_std(self, mean_std_fp: str) -> None:
-        latent_mean, latent_std = torch.load(mean_std_fp, map_location="cuda", weights_only=True)
-        latent_mean = latent_mean.view(self.latent_ch, -1)[:, : self.latent_chunk_duration]
-        latent_std = latent_std.view(self.latent_ch, -1)[:, : self.latent_chunk_duration]
-
-        target_shape = [1, self.latent_ch, self.latent_chunk_duration, 1, 1]
-
-        self.register_buffer(
-            "latent_mean",
-            latent_mean.to(self.dtype).reshape(*target_shape),
-            persistent=False,
-        )
-        self.register_buffer(
-            "latent_std",
-            latent_std.to(self.dtype).reshape(*target_shape),
-            persistent=False,
-        )
-
-    def transform_encode_state_shape(self, state: torch.Tensor) -> torch.Tensor:
-        """
-        Rearranges the input state tensor to the required shape for encoding video data. Mainly for chunk based encoding
-        """
-        B, C, T, H, W = state.shape
-        assert (
-            T % self.pixel_chunk_duration == 0
-        ), f"Temporal dimension {T} is not divisible by chunk_length {self.pixel_chunk_duration}"
-        return rearrange(state, "b c (n t) h w -> (b n) c t h w", t=self.pixel_chunk_duration)
-
-    def transform_decode_state_shape(self, latent: torch.Tensor) -> None:
-        B, _, T, _, _ = latent.shape
-        assert (
-            T % self.latent_chunk_duration == 0
-        ), f"Temporal dimension {T} is not divisible by chunk_length {self.latent_chunk_duration}"
-        return rearrange(latent, "b c (n t) h w -> (b n) c t h w", t=self.latent_chunk_duration)
-
-    @torch.no_grad()
-    def encode(self, state: torch.Tensor) -> torch.Tensor:
-        if self._temporal_compress_factor == 1:
-            _, _, origin_T, _, _ = state.shape
-            state = rearrange(state, "b c t h w -> (b t) c 1 h w")
-        B, C, T, H, W = state.shape
-        state = self.transform_encode_state_shape(state)
-        # use max_enc_batch_size to avoid OOM
-        if state.shape[0] > self.max_enc_batch_size:
-            latent = []
-            for i in range(0, state.shape[0], self.max_enc_batch_size):
-                latent.append(super().encode(state[i : i + self.max_enc_batch_size]))
-            latent = torch.cat(latent, dim=0)
-        else:
-            latent = super().encode(state)
-
-        latent = rearrange(latent, "(b n) c t h w -> b c (n t) h w", b=B)
-        if self._temporal_compress_factor == 1:
-            latent = rearrange(latent, "(b t) c 1 h w -> b c t h w", t=origin_T)
-        return latent
-
-    @torch.no_grad()
-    def decode(self, latent: torch.Tensor) -> torch.Tensor:
-        """
-        Decodes a batch of latent representations into video frames by applying temporal chunking. Similar to encode,
-        it handles video data by processing smaller temporal chunks to reconstruct the original video dimensions.
-
-        It can also decode single frame image data.
-
-        Args:
-            latent (torch.Tensor): The latent space tensor containing encoded video data.
-
-        Returns:
-            torch.Tensor: The decoded video tensor reconstructed from latent space.
-        """
-        if self._temporal_compress_factor == 1:
-            _, _, origin_T, _, _ = latent.shape
-            latent = rearrange(latent, "b c t h w -> (b t) c 1 h w")
-        B, _, T, _, _ = latent.shape
-        latent = self.transform_decode_state_shape(latent)
-        # use max_enc_batch_size to avoid OOM
-        if latent.shape[0] > self.max_dec_batch_size:
-            state = []
-            for i in range(0, latent.shape[0], self.max_dec_batch_size):
-                state.append(super().decode(latent[i : i + self.max_dec_batch_size]))
-            state = torch.cat(state, dim=0)
-        else:
-            state = super().decode(latent)
-        assert state.shape[2] == self.pixel_chunk_duration
-        state = rearrange(state, "(b n) c t h w -> b c (n t) h w", b=B)
-        if self._temporal_compress_factor == 1:
-            return rearrange(state, "(b t) c 1 h w -> b c t h w", t=origin_T)
-        return state
-
-    @property
-    def pixel_chunk_duration(self) -> int:
-        return self._pixel_chunk_duration
-
-    @property
-    def latent_chunk_duration(self) -> int:
-        # return self._latent_chunk_duration
-        assert (self.pixel_chunk_duration - 1) % self.temporal_compression_factor == 0, (
-            f"Pixel chunk duration {self.pixel_chunk_duration} is not divisible by latent chunk duration "
-            f"{self.latent_chunk_duration}"
-        )
-        return (self.pixel_chunk_duration - 1) // self.temporal_compression_factor + 1
-
-    @property
-    def temporal_compression_factor(self):
-        return self._temporal_compress_factor
-
-    def get_latent_num_frames(self, num_pixel_frames: int) -> int:
-        if num_pixel_frames == 1:
-            return 1
-        assert (
-            num_pixel_frames % self.pixel_chunk_duration == 0
-        ), f"Temporal dimension {num_pixel_frames} is not divisible by chunk_length {self.pixel_chunk_duration}"
-        return num_pixel_frames // self.pixel_chunk_duration * self.latent_chunk_duration
-
-    def get_pixel_num_frames(self, num_latent_frames: int) -> int:
-        if num_latent_frames == 1:
-            return 1
-        assert (
-            num_latent_frames % self.latent_chunk_duration == 0
-        ), f"Temporal dimension {num_latent_frames} is not divisible by chunk_length {self.latent_chunk_duration}"
-        return num_latent_frames // self.latent_chunk_duration * self.pixel_chunk_duration
 
 
 class VideoJITTokenizer(BasePretrainedVideoTokenizer, JITVAE, VideoTokenizerInterface):

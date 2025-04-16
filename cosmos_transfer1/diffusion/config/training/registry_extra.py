@@ -27,7 +27,7 @@ from cosmos_transfer1.diffusion.config.base.data import register_data_ctrlnet
 from cosmos_transfer1.diffusion.training.networks.general_dit_ctrl_enc import GeneralDITEncoder
 from cosmos_transfer1.diffusion.training.networks.general_dit import GeneralDIT
 from cosmos_transfer1.diffusion.config.training.tokenizer import get_cosmos_diffusion_tokenizer_comp8x8x8
-from cosmos_transfer1.diffusion.config.registry import register_tokenizer
+# from cosmos_transfer1.diffusion.config.registry import register_tokenizer
 from cosmos_transfer1.utils.lazy_config import LazyCall as L
 from cosmos_transfer1.utils.lazy_config import LazyDict
 import copy
@@ -84,6 +84,14 @@ def register_conditioner_ctrlnet(cs):
         package="model.conditioner",
         name="ctrlnet_add_fps_image_size_padding_mask",
         node=VideoConditionerFpsSizePaddingWithCtrlConfig,
+    )
+
+def register_tokenizer(cs):
+    cs.store(
+        group="tokenizer",
+        package="model.tokenizer",
+        name="cosmos_diffusion_tokenizer_res720_comp8x8x8_t121_ver092624",
+        node=get_cosmos_diffusion_tokenizer_comp8x8x8(resolution="720", chunk_duration=121),
     )
 
 

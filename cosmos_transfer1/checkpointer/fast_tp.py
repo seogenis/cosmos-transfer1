@@ -66,7 +66,7 @@ class Checkpointer(TPCheckpointer):
         sorted_resume_keys = sorted(resume_keys)
         for key in sorted_resume_keys:
             _ckpt_path = self.add_type_postfix_to_checkpoint_path(key, checkpoint_path, model)
-            _state_dict = easy_io.load(_ckpt_path, fast_backend=True, backend_key=self.load_s3_backend_key)
+            _state_dict = easy_io.load(_ckpt_path, weights_only=False)
             state_dict[key] = _state_dict
             self.print(f"Loaded checkpoint from: {_ckpt_path}")
         distributed.barrier()
@@ -85,8 +85,7 @@ class Checkpointer(TPCheckpointer):
                     easy_io.dump(
                         item.state_dict,
                         item.save_path,
-                        fast_backend=False,  # too cpu heavy
-                        backend_key=self.save_s3_backend_key,
+                        # fast_backend=False,  # too cpu heavy
                     )
                     self.print(f"Saved {key} to {item.save_path}")
                 except Exception as e:

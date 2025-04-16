@@ -134,8 +134,8 @@ class ExampleTransferDataset(Dataset):
                     f"Depth video {ctrl_path} has fewer frames than main video"
 
                 # Load the corresponding frames
-                depth_frames = vr.get_batch(frame_ids).asnumpy()
-                depth_frames = torch.from_numpy(depth_frames).permute(0, 3, 1, 2)  # [T,C,H,W]
+                depth_frames = vr.get_batch(frame_ids).asnumpy() # [T,H,W,C]
+                depth_frames = torch.from_numpy(depth_frames).permute(3, 0, 1, 2)  # [C,T,H,W], same as rgb video
                 data_dict["depth"] = {
                     "video": depth_frames,
                     "frame_start": frame_ids[0],
@@ -165,7 +165,7 @@ class ExampleTransferDataset(Dataset):
 
                 # Process video frames
                 video = torch.from_numpy(frames).permute(3, 0, 1, 2)  # [T,H,W,C] -> [C,T,H,W]
-                aspect_ratio = detect_aspect_ratio((video.shape[3], video.shape[2]))  # expects (w, h)
+                aspect_ratio = detect_aspect_ratio((video.shape[3], video.shape[2]))  # expects (W, H)
                 
                 # Basic data
                 data["video"] = video
@@ -179,17 +179,17 @@ class ExampleTransferDataset(Dataset):
                 # Load T5 embeddings
                 with open(data["video_name"]["t5_embedding_path"], "rb") as f:
                     t5_embedding = pickle.load(f)[0]
-                data["t5_text_embeddings"] = torch.from_numpy(t5_embedding).cuda()
-                data["t5_text_mask"] = torch.ones(512, dtype=torch.int64).cuda()
+                data["t5_text_embeddings"] = torch.from_numpy(t5_embedding) #.cuda()
+                data["t5_text_mask"] = torch.ones(512, dtype=torch.int64) #.cuda()
 
                 # Add metadata
                 data["fps"] = fps
                 data["frame_start"] = frame_ids[0]
                 data["frame_end"] = frame_ids[-1] + 1
                 data["num_frames"] = self.sequence_length
-                data["image_size"] = torch.tensor([704, 1280, 704, 1280]).cuda()
-                data["padding_mask"] = torch.zeros(1, 704, 1280).cuda()
-
+                data["image_size"] = torch.tensor([704, 1280, 704, 1280]) #.cuda()
+                data["padding_mask"] = torch.zeros(1, 704, 1280) #.cuda()
+                
                 if self.ctrl_type:
                     ctrl_data = self._load_control_data({
                         "ctrl_path": os.path.join(
@@ -202,10 +202,12 @@ class ExampleTransferDataset(Dataset):
                     if ctrl_data is None:  # Control data loading failed
                         index = np.random.randint(len(self.video_paths))
                         continue
-                    data.update(ctrl_data)
+                    data.update(ctrl_data) 
 
-                    # Apply augmentations including control input processing
-                    for aug_name, aug_fn in self.augmentor.items():
+                    # The ctrl_data above is the 'raw' data loaded (e.g. a loaded segmentation pkl).
+                    # Next, we process it into the control input "video" tensor that the model expects.
+                    # This is done in the augmentor.
+                    for _, aug_fn in self.augmentor.items():
                         data = aug_fn(data)
 
                 return data
@@ -232,8 +234,8 @@ if __name__ == "__main__":
     '''
     Sanity check for the dataset.
     '''
-    control_input_key = "control_input_edge"
-    visualize_control_input = False
+    control_input_key = "control_input_keypoint"
+    visualize_control_input = True
 
     dataset = ExampleTransferDataset(
         dataset_dir="datasets/hdvila/",
@@ -262,5 +264,5 @@ if __name__ == "__main__":
         if visualize_control_input:
             import imageio
             control_input_tensor = data[control_input_key].permute(1, 2, 3, 0).cpu().numpy()
-            video_name = "control_input_edge.mp4"
+            video_name = f"{control_input_key}.mp4"
             imageio.mimsave(video_name, control_input_tensor, fps=24)

@@ -191,8 +191,13 @@ Now we can start training! Run the following command to dry-run an example train
 ```bash
 export OUTPUT_ROOT=checkpoints # default value
 
+# Training from scratch
 torchrun --nproc_per_node=1 -m cosmos_transfer1.diffusion.training.train --dryrun --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain
+
+# Post-train from our provided checkpoint (need to first split checkpoint into TP checkpoints as instructed above)
+torchrun --nproc_per_node=1 -m cosmos_transfer1.diffusion.training.train --dryrun --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_posttrain
 ```
+
 Explanation of the command:
 
 - The trainer and the passed (master) config script will, in the background, load the detailed experiment configurations defined in `cosmos_transfer1/diffusion/config/training/experiment/ctrl_7b_tp_121frames.py`, and register the experiments configurations for all `hint_keys` (control modalities), covering both pretrain and post-train. We use [Hydra](https://hydra.cc/docs/intro/) for advanced configuration composition and overriding.
@@ -201,30 +206,40 @@ Explanation of the command:
 
 - To customize your training, see `cosmos_transfer1/diffusion/config/training/experiment/ctrl_7b_tp_121frames.py` to understand how the detailed configs of the model, trainer, dataloader etc. are defined, and edit as needed.
 
-- Removing the `--dryrun` will start a real training job.
+- Removing the `--dryrun` and set `--nproc_per_node=8` will start a real training job on 8 GPUs:
+
+    ```bash
+    torchrun --nproc_per_node=8 -m cosmos_transfer1.diffusion.training.train --config=cosmos_transfer1/diffusion/config/config_train.py -- experiment=CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain
+    ```
 
 - Change the `experiment` value will decide which control modality model is trained, and whether it's pretrain or post-train. For example, replacing the experiment name in the command with `CTRL_7Bv1pt3_lvg_tp_121frames_control_input_depth_block3_posttrain` will post-train the DepthControl model from the downloaded checkpoint instead.
 
 - The checkpoints will be saved to `${OUTPUT_ROOT}/PROJECT/GROUP/NAME`. See the job config to understand how they are determined:
 
-```python
-# in cosmos_transfer1/diffusion/config/training/experiment/ctrl_7b_tp_121frames.py
-config = LazyDict(
-    dict(
-        ...
-        job=dict(
-            project="cosmos_transfer1_pretrain",
-            group="CTRL_7Bv1_lvg",
-            name="CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain",
-        ),
-        ...
+    ```python
+    # In cosmos_transfer1/diffusion/config/training/experiment/ctrl_7b_tp_121frames.py
+    config = LazyDict(
+        dict(
+            ...
+            job=dict(
+                project="cosmos_transfer1_pretrain",
+                group="CTRL_7Bv1_lvg",
+                name="CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain",
+            ),
+            ...
+        )
     )
-)
-```
+    ```
 
-During the training, the checkpoints will be saved in the below structure.
-```
-checkpoints/cosmos_transfer1_pretrain/CTRL_7Bv1_lvg/CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain/checkpoints/
-├── iter_{NUMBER}_reg_model.pt
-├── iter_{NUMBER}_ema_model.pt
-```
+    During the training, the checkpoints will be saved in the below structure. Since we use TensorParallel across 8 GPUs, 8 checkpoints will be saved each time.
+
+    ```
+    checkpoints/cosmos_transfer1_pretrain/CTRL_7Bv1_lvg/CTRL_7Bv1pt3_lvg_tp_121frames_control_input_edge_block3_pretrain/checkpoints/
+    ├── iter_{NUMBER}.pt             # "master" checkpoint, saving metadata only
+    ├── iter_{NUMBER}_model_mp_0.pt  # real TP checkpoints
+    ├── iter_{NUMBER}_model_mp_1.pt
+    ├── ...
+    ├── iter_{NUMBER}_model_mp_7.pt
+    ```
+
+- Since the `experiment` is uniquely associated with its checkpoint directory, rerunning the same training command after an unexpected interruption will automatically resume from the latest saved checkpoint.

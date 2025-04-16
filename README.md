@@ -54,7 +54,6 @@ Please refer to [INSTALL.md](INSTALL.md) for general instructions on environment
 
 ### Post-train pre-trained Cosmos-Transfer1 models
 
-* Post-train diffusion-based Text2World models using custom datasets [with multi-node support]Coming soon
 * [Post-train pre-trained Cosmos-Transfer1-7B [Depth|Segmentation|Edge|Vis|Keypoint]](examples/training_cosmos_transfer_7b.md) **[with multi-GPU support]**
 * Post-train pre-trained Cosmos-Transfer1-7B-Sample-AV [LiDAR]: Coming soon
 * Post-train pre-trained Cosmos-Transfer1-7B-Sample-AV [HDMap]: Coming soon
