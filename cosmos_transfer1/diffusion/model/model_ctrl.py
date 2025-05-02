@@ -143,6 +143,7 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
 
     def encode_latent(self, data_batch: dict, cond_mask: list = []) -> torch.Tensor:
         x = data_batch[data_batch["hint_key"]]
+        # print(f"x shape: {x.shape}")
         latent = []
         # control input goes through tokenizer, which always takes 3-input channels
         num_conditions = x.size(1) // 3  # input conditions were concatenated along channel dimension
@@ -152,7 +153,8 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
                 if not cond_mask.any():  # make sure at least one condition is present
                     cond_mask = [True] * num_conditions
             elif not cond_mask:  # during inference, use hint_mask to indicate which conditions are used
-                cond_mask = self.config.hint_mask
+                # cond_mask = self.config.hint_mask * num_conditions
+                cond_mask = [True] * num_conditions
         else:
             cond_mask = [True] * num_conditions
         for idx in range(0, x.size(1), 3):
@@ -213,12 +215,12 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
 
         condition.video_cond_bool = True
         condition = self.add_condition_video_indicator_and_video_input_mask(
-            condition_latent[:1], condition, num_condition_t
+            condition_latent, condition, num_condition_t
         )
 
         uncondition.video_cond_bool = True  # Not do cfg on condition frames
         uncondition = self.add_condition_video_indicator_and_video_input_mask(
-            condition_latent[:1], uncondition, num_condition_t
+            condition_latent, uncondition, num_condition_t
         )
 
         # Add extra conditions for ctrlnet.
@@ -249,11 +251,14 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
         if hasattr(self, "hint_encoders"):
             self.model.net.hint_encoders = self.hint_encoders
 
+
         def x0_fn(noise_x: torch.Tensor, sigma: torch.Tensor):
+            log.debug(f"x0_fn inputs - noise_x: {noise_x.shape}, sigma: {sigma.shape}")
+            B = noise_x.shape[0]  # Batch dimension
             w, h = target_w, target_h
             n_img_w = (w - 1) // patch_w + 1
             n_img_h = (h - 1) // patch_h + 1
-
+            
             overlap_size_w = overlap_size_h = 0
             if n_img_w > 1:
                 overlap_size_w = (n_img_w * patch_w - w) // (n_img_w - 1)
@@ -262,38 +267,92 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
                 overlap_size_h = (n_img_h * patch_h - h) // (n_img_h - 1)
                 assert n_img_h * patch_h - overlap_size_h * (n_img_h - 1) == h
 
-            batch_images = noise_x
-            batch_sigma = sigma
-            output = []
-            for idx, cur_images in enumerate(batch_images):
-                noise_x = cur_images.unsqueeze(0)
-                sigma = batch_sigma[idx : idx + 1]
-                condition.gt_latent = condition_latent[idx : idx + 1]
-                uncondition.gt_latent = condition_latent[idx : idx + 1]
-                setattr(condition, hint_key, latent_hint[idx : idx + 1])
-                if getattr(uncondition, hint_key) is not None:
-                    setattr(uncondition, hint_key, latent_hint[idx : idx + 1])
 
-                cond_x0 = self.denoise(
-                    noise_x,
-                    sigma,
-                    condition,
-                    condition_video_augment_sigma_in_inference=condition_video_augment_sigma_in_inference,
-                    seed=seed,
-                ).x0_pred_replaced
-                uncond_x0 = self.denoise(
-                    noise_x,
-                    sigma,
-                    uncondition,
-                    condition_video_augment_sigma_in_inference=condition_video_augment_sigma_in_inference,
-                    seed=seed,
-                ).x0_pred_replaced
-                x0 = cond_x0 + guidance * (cond_x0 - uncond_x0)
-                output.append(x0)
-            output = rearrange(torch.stack(output), "(n t) b ... -> (b n t) ...", n=n_img_h, t=n_img_w)
-            final_output = merge_patches_into_video(output, overlap_size_h, overlap_size_w, n_img_h, n_img_w)
-            final_output = split_video_into_patches(final_output, patch_h, patch_w)
-            return final_output
+            condition.gt_latent = condition_latent
+            uncondition.gt_latent = condition_latent
+            setattr(condition, hint_key, latent_hint)
+            if getattr(uncondition, hint_key) is not None:
+                setattr(uncondition, hint_key, latent_hint)
+
+            # Batch denoising
+            cond_x0 = self.denoise(
+                noise_x,
+                sigma,
+                condition,
+                condition_video_augment_sigma_in_inference=condition_video_augment_sigma_in_inference,
+                seed=seed
+            ).x0_pred_replaced
+            
+            uncond_x0 = self.denoise(
+                noise_x,
+                sigma,
+                uncondition,
+                condition_video_augment_sigma_in_inference=condition_video_augment_sigma_in_inference,
+                seed=seed
+            ).x0_pred_replaced
+
+            # log.info(
+            #     f"Denoise outputs - cond_x0: {cond_x0.shape}, uncond_x0: {uncond_x0.shape}\n"
+            #     f"Guidance: {guidance}, Condition latent: {condition_latent.shape if condition_latent is not None else None}"
+            # )
+
+            x0 = cond_x0 + guidance * (cond_x0 - uncond_x0)
+            
+            # Batched patch merging
+            merged = merge_patches_into_video(
+                x0, 
+                overlap_size_h=overlap_size_h,
+                overlap_size_w=overlap_size_w,
+                n_img_h=n_img_h,
+                n_img_w=n_img_w
+            )
+            return split_video_into_patches(merged, patch_h, patch_w)
+
+        # def x0_fn(noise_x: torch.Tensor, sigma: torch.Tensor):
+        #     w, h = target_w, target_h
+        #     n_img_w = (w - 1) // patch_w + 1
+        #     n_img_h = (h - 1) // patch_h + 1
+
+        #     overlap_size_w = overlap_size_h = 0
+        #     if n_img_w > 1:
+        #         overlap_size_w = (n_img_w * patch_w - w) // (n_img_w - 1)
+        #         assert n_img_w * patch_w - overlap_size_w * (n_img_w - 1) == w
+        #     if n_img_h > 1:
+        #         overlap_size_h = (n_img_h * patch_h - h) // (n_img_h - 1)
+        #         assert n_img_h * patch_h - overlap_size_h * (n_img_h - 1) == h
+
+        #     batch_images = noise_x
+        #     batch_sigma = sigma
+        #     output = []
+        #     for idx, cur_images in enumerate(batch_images):
+        #         noise_x = cur_images.unsqueeze(0)
+        #         sigma = batch_sigma[idx : idx + 1]
+        #         condition.gt_latent = condition_latent[idx : idx + 1]
+        #         uncondition.gt_latent = condition_latent[idx : idx + 1]
+        #         setattr(condition, hint_key, latent_hint[idx : idx + 1])
+        #         if getattr(uncondition, hint_key) is not None:
+        #             setattr(uncondition, hint_key, latent_hint[idx : idx + 1])
+
+        #         cond_x0 = self.denoise(
+        #             noise_x,
+        #             sigma,
+        #             condition,
+        #             condition_video_augment_sigma_in_inference=condition_video_augment_sigma_in_inference,
+        #             seed=seed,
+        #         ).x0_pred_replaced
+        #         uncond_x0 = self.denoise(
+        #             noise_x,
+        #             sigma,
+        #             uncondition,
+        #             condition_video_augment_sigma_in_inference=condition_video_augment_sigma_in_inference,
+        #             seed=seed,
+        #         ).x0_pred_replaced
+        #         x0 = cond_x0 + guidance * (cond_x0 - uncond_x0)
+        #         output.append(x0)
+        #     output = rearrange(torch.stack(output), "(n t) b ... -> (b n t) ...", n=n_img_h, t=n_img_w)
+        #     final_output = merge_patches_into_video(output, overlap_size_h, overlap_size_w, n_img_h, n_img_w)
+        #     final_output = split_video_into_patches(final_output, patch_h, patch_w)
+        #     return final_output
 
         return x0_fn
 

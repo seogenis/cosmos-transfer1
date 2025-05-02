@@ -67,7 +67,6 @@ class DiffusionV2WModel(DiffusionT2WModel):
             augment_latent (Tensor): augmented latent tensor in shape B,C,T,H,W
 
         """
-
         # Inference only, use fixed sigma for the condition region
         assert (
             condition_video_augment_sigma_in_inference is not None
@@ -80,7 +79,9 @@ class DiffusionV2WModel(DiffusionT2WModel):
             log.debug("augment_sigma larger than sigma or other frame, remove condition")
             condition.condition_video_indicator = condition.condition_video_indicator * 0
 
-        augment_sigma = torch.tensor([augment_sigma], **self.tensor_kwargs)
+        # augment_sigma = torch.tensor([augment_sigma], **self.tensor_kwargs)
+        B = gt_latent.shape[0]
+        augment_sigma = torch.full((B,), augment_sigma, **self.tensor_kwargs)
 
         # Now apply the augment_sigma to the gt_latent
 
@@ -94,12 +95,12 @@ class DiffusionV2WModel(DiffusionT2WModel):
         augment_latent = gt_latent + noise * augment_sigma[:, None, None, None, None]
 
         _, _, c_in_augment, _ = self.scaling(sigma=augment_sigma)
-
         # Multiply the whole latent with c_in_augment
         augment_latent_cin = batch_mul(augment_latent, c_in_augment)
 
         # Since the whole latent will multiply with c_in later, we devide the value to cancel the effect
         _, _, c_in, _ = self.scaling(sigma=sigma)
+
         augment_latent_cin = batch_mul(augment_latent_cin, 1 / c_in)
 
         return condition, augment_latent_cin

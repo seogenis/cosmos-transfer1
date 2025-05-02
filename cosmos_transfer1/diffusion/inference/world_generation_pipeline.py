@@ -38,6 +38,7 @@ from cosmos_transfer1.diffusion.inference.inference_utils import (
     detect_aspect_ratio,
     generate_control_input,
     generate_world_from_control,
+    get_batched_ctrl_batch,
     get_ctrl_batch,
     get_upscale_size,
     get_video_batch,
@@ -324,10 +325,15 @@ class DiffusionControl2WorldGenerationPipeline(BaseWorldGenerationPipeline):
             video = (1.0 + self.model.decode(sample)).clamp(0, 2) / 2  # [B, 3, T, H, W]
         else:
             # Do decoding for each batch sequentially to prevent OOM.
-            samples = []
-            for sample_i in sample:
-                samples += [self.model.decode(sample_i.unsqueeze(0)).cpu()]
-            samples = (torch.cat(samples) + 1).clamp(0, 2) / 2
+            # samples = []
+            # for sample_i in sample:
+            #     samples += [self.model.decode(sample_i.unsqueeze(0)).cpu()]
+            # samples = (torch.cat(samples) + 1).clamp(0, 2) / 2
+
+            samples = self.model.decode(sample)  # [B, C, T, H, W]
+            samples = (samples + 1).clamp(0, 2) / 2
+            B = samples.shape[0]
+            samples = split_video_into_patches(samples, patch_h, patch_w)
 
             # Stitch the patches together to form the final video.
             patch_h, patch_w = samples.shape[-2:]
@@ -384,6 +390,51 @@ class DiffusionControl2WorldGenerationPipeline(BaseWorldGenerationPipeline):
             self._offload_tokenizer()
 
         return sample
+
+
+    def _run_model_with_offload_batch(
+        self,
+        prompt_embeddings: list[torch.Tensor],
+        video_paths: list[str],
+        negative_prompt_embeddings: Optional[list[torch.Tensor]] = None,
+        control_inputs_list: list[dict] = None,
+    ) -> list[np.ndarray]:
+        """Generate world representations in batch with automatic model offloading.
+
+        Args:
+            prompt_embeddings: List of text embedding tensors from T5 encoder
+            video_paths: List of paths to input videos
+            negative_prompt_embeddings: Optional list of embeddings for negative prompt guidance
+            control_inputs_list: List of control input dictionaries
+
+        Returns:
+            list[np.ndarray]: List of generated world representations as numpy arrays
+        """
+        if self.offload_tokenizer:
+            self._load_tokenizer()
+
+        if self.offload_network:
+            self._load_network()
+
+        prompt_embeddings = torch.cat(prompt_embeddings)
+        if negative_prompt_embeddings is not None:
+            negative_prompt_embeddings = torch.cat(negative_prompt_embeddings)
+
+        samples = self._run_model_batch(
+            prompt_embeddings=prompt_embeddings,
+            negative_prompt_embeddings=negative_prompt_embeddings,
+            video_paths=video_paths,
+            control_inputs_list=control_inputs_list,
+        )
+
+        if self.offload_network:
+            self._offload_network()
+
+        if self.offload_tokenizer:
+            self._offload_tokenizer()
+
+        return samples
+
 
     def _run_model(
         self,
@@ -528,14 +579,170 @@ class DiffusionControl2WorldGenerationPipeline(BaseWorldGenerationPipeline):
         video = video[0].permute(1, 2, 3, 0).numpy()
         return video
 
+    def _run_model_batch(
+        self,
+        prompt_embeddings: torch.Tensor,  # [B, ...]
+        video_paths: list[str],           # [B]
+        negative_prompt_embeddings: Optional[torch.Tensor] = None,  # [B, ...] or None
+        control_inputs_list: list[dict] = None,  # [B] list of dicts
+    ) -> np.ndarray:
+        """
+        Batched world generation with model offloading.
+        Each batch element corresponds to a (prompt, video, control_inputs) triple.
+        """
+        B = len(video_paths)
+        assert prompt_embeddings.shape[0] == B, "Batch size mismatch for prompt embeddings"
+        if negative_prompt_embeddings is not None:
+            assert negative_prompt_embeddings.shape[0] == B, "Batch size mismatch for negative prompt embeddings"
+        assert len(control_inputs_list) == B, "Batch size mismatch for control_inputs_list"
+
+        # Prepare batched data_batch and state_shape
+        data_batch, state_shape = get_batched_ctrl_batch(
+            model=self.model,
+            prompt_embeddings=prompt_embeddings,  # [B, ...]
+            negative_prompt_embeddings=negative_prompt_embeddings,
+            height=self.height,
+            width=self.width,
+            fps=self.fps,
+            num_video_frames=self.num_video_frames,
+            input_video_paths=video_paths,           # [B]
+            control_inputs_list=control_inputs_list,   # [B]
+            blur_strength=self.blur_strength,
+            canny_threshold=self.canny_threshold
+        )
+
+        # Padding logic (identical to original, but batch-aware)
+        hint_key = data_batch["hint_key"]
+        control_input = data_batch[hint_key]  # [B, C, T, H, W]
+        input_video = data_batch.get("input_video", None)
+        control_weight = data_batch.get("control_weight", None)
+        num_new_generated_frames = self.num_video_frames - self.num_input_frames
+        B, C, T, H, W = control_input.shape
+
+        if (T - self.num_input_frames) % num_new_generated_frames != 0:  # pad duplicate frames at the end
+            pad_t = num_new_generated_frames - ((T - self.num_input_frames) % num_new_generated_frames)
+            pad_frames = control_input[:, :, -1:].repeat(1, 1, pad_t, 1, 1)
+            control_input = torch.cat([control_input, pad_frames], dim=2)
+            if input_video is not None:
+                pad_video = input_video[:, :, -1:].repeat(1, 1, pad_t, 1, 1)
+                input_video = torch.cat([input_video, pad_video], dim=2)
+            num_total_frames_with_padding = control_input.shape[2]
+            if (
+                isinstance(control_weight, torch.Tensor)
+                and control_weight.ndim > 5
+                and num_total_frames_with_padding > control_weight.shape[3]
+            ):
+                pad_t = num_total_frames_with_padding - control_weight.shape[3]
+                pad_weight = control_weight[:, :, :, -1:].repeat(1, 1, 1, pad_t, 1, 1)
+                control_weight = torch.cat([control_weight, pad_weight], dim=3)
+        else:
+            num_total_frames_with_padding = T
+        N_clip = (num_total_frames_with_padding - self.num_input_frames) // num_new_generated_frames
+
+        video = []
+        prev_frames = None
+        for i_clip in tqdm(range(N_clip)):
+            # data_batch_i = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in data_batch.items()}
+            data_batch_i = {k: v for k, v in data_batch.items()}
+            start_frame = num_new_generated_frames * i_clip
+            end_frame = num_new_generated_frames * (i_clip + 1) + self.num_input_frames
+
+            # Prepare x_sigma_max
+            if input_video is not None:
+                input_frames = input_video[:, :, start_frame:end_frame].cuda()
+                x0 = self.model.encode(input_frames).contiguous()
+                x_sigma_max = self.model.get_x_from_clean(x0, self.sigma_max, seed=(self.seed + i_clip))
+            else:
+                x_sigma_max = None
+
+            data_batch_i[hint_key] = control_input[:, :, start_frame:end_frame].cuda()
+            latent_hint = []
+            for b in range(B):
+                data_batch_p = {k: v for k, v in data_batch_i.items()}
+                data_batch_p[hint_key] = data_batch_i[hint_key][b : b + 1]
+                if len(control_inputs_list) >= 1 and len(control_inputs_list[0]) > 1: 
+                    latent_hint_i = []
+                    for idx in range(0, data_batch_p[hint_key].size(1), 3):
+                        x_rgb = data_batch_p[hint_key][:, idx : idx + 3]
+                        latent_hint_i.append(self.model.encode(x_rgb))
+                    latent_hint.append(torch.cat(latent_hint_i).unsqueeze(0))
+                else:
+                    latent_hint.append(self.model.encode_latent(data_batch_p))
+            data_batch_i["latent_hint"] = latent_hint = torch.cat(latent_hint)
+
+            # Resize control_weight if needed
+            if isinstance(control_weight, torch.Tensor) and control_weight.ndim > 4:
+                control_weight_t = control_weight[..., start_frame:end_frame, :, :]
+                t, h, w = latent_hint.shape[-3:]
+                data_batch_i["control_weight"] = resize_control_weight_map(control_weight_t, (t, h // 2, w // 2))
+
+            # Prepare condition_latent for long video generation
+            if i_clip == 0:
+                num_input_frames = 0
+                latent_tmp = latent_hint if latent_hint.ndim == 5 else latent_hint[:, 0]
+                condition_latent = torch.zeros_like(latent_tmp)
+            else:
+                num_input_frames = self.num_input_frames
+                prev_frames_patched = split_video_into_patches(prev_frames, control_input.shape[-2], control_input.shape[-1])
+                input_frames = prev_frames_patched.bfloat16() / 255.0 * 2 - 1
+                condition_latent = self.model.encode(input_frames).contiguous()
+
+            # Generate video frames for this clip (batched)
+            latents = generate_world_from_control(
+                model=self.model,
+                state_shape=state_shape,
+                is_negative_prompt=True,
+                data_batch=data_batch_i,
+                guidance=self.guidance,
+                num_steps=self.num_steps,
+                seed=(self.seed + i_clip),
+                condition_latent=condition_latent,
+                num_input_frames=num_input_frames,
+                sigma_max=self.sigma_max if x_sigma_max is not None else None,
+                x_sigma_max=x_sigma_max,
+            )
+
+            decoded_videos = []
+            for b in range(B):
+                # If patching is used, select patches for this batch element
+                if latents.shape[0] == B:
+                    decoded = self._run_tokenizer_decoding(latents[b:b+1])
+                else:
+                    # Patching: gather patches for batch element b
+                    n_patches = latents.shape[0] // B
+                    patches = latents[b * n_patches : (b + 1) * n_patches]
+                    decoded = self._run_tokenizer_decoding(patches)
+                decoded_videos.append(decoded)
+
+            frames = np.stack(decoded_videos, axis=0) # [B, T, H, W, C]
+            # frames = self._run_tokenizer_decoding(latents)  # [B, T, H, W, C] or similar
+            frames = torch.from_numpy(frames).permute(0, 4, 1, 2, 3)  # [B, C, T, H, W]
+
+            if i_clip == 0:
+                video.append(frames)
+            else:
+                video.append(frames[:, :, self.num_input_frames:])
+
+            prev_frames = frames
+
+        # Concatenate all clips along time dimension
+        video = torch.cat(video, dim=2)[:, :, :T]
+        # Convert to [B, T, H, W, C] for output
+        video = video.permute(0, 2, 3, 4, 1).cpu().numpy()
+        return video
+
+
+
+
     def generate(
         self,
-        prompt: str,
-        video_path: str,
-        negative_prompt: Optional[str] = None,
-        control_inputs: dict = None,
+        prompt: str | list[str],
+        video_path: str | list[str],
+        negative_prompt: Optional[str | list[str]] = None,
+        control_inputs: dict | list[dict] = None,
         save_folder: str = "outputs/",
-    ) -> tuple[np.ndarray, str] | None:
+        batch_size: int = 1,
+    ) -> tuple[np.ndarray, str | list[str]] | None:
         """Generate video from text prompt and control video.
 
         Pipeline steps:
@@ -550,6 +757,7 @@ class DiffusionControl2WorldGenerationPipeline(BaseWorldGenerationPipeline):
             negative_prompt: Optional text to guide what not to generate
             control_inputs: Control inputs for guided generation
             save_folder: Folder to save intermediate files
+            batch_size: Number of videos to process simultaneously
 
         Returns:
             tuple: (
@@ -557,51 +765,150 @@ class DiffusionControl2WorldGenerationPipeline(BaseWorldGenerationPipeline):
                 Final prompt used for generation (may be enhanced)
             ), or None if content fails guardrail safety checks
         """
-        log.info(f"Run with prompt: {prompt}")
-        log.info(f"Run with video path: {video_path}")
-        log.info(f"Run with negative prompt: {negative_prompt}")
+        # log.info(f"Run with prompt: {prompt}")
+        # log.info(f"Run with video path: {video_path}")
+        # log.info(f"Run with negative prompt: {negative_prompt}")
 
-        # Upsample prompt if enabled
-        if self.prompt_upsampler:
-            if int(os.environ["RANK"]) == 0:
-                self._push_torchrun_environ_variables()
-                prompt = self._process_prompt_upsampler(prompt, video_path, save_folder)
-                self._pop_torchrun_environ_variables()
-                log.info(f"Upsampled prompt: {prompt}")
+        prompts = [prompt] if isinstance(prompt, str) else prompt
+        video_paths = [video_path] if isinstance(video_path, str) else video_path
+        control_inputs_list = [control_inputs] if not isinstance(control_inputs, list) else control_inputs
+        
+        # Ensure all inputs have matching batch size
+        # batch_size = len(prompts)
+        assert len(video_paths) == batch_size, "Number of prompts and videos must match"
+        assert len(control_inputs_list) == batch_size, "Number of control inputs must match batch size"
+        log.info(f"Running batch generation with batch_size={batch_size}")
 
-        log.info("Run guardrail on prompt")
-        is_safe = self._run_guardrail_on_prompt_with_offload(prompt)
-        if not is_safe:
-            log.critical("Input text prompt is not safe")
+        # Process prompts in batch
+        all_videos = []
+        all_final_prompts = []
+        
+        # Upsample prompts if enabled
+        if self.prompt_upsampler and int(os.environ["RANK"]) == 0:
+            self._push_torchrun_environ_variables()
+            upsampled_prompts = []
+            for i, (single_prompt, single_video_path) in enumerate(zip(prompts, video_paths)):
+                log.info(f"Upsampling prompt {i+1}/{batch_size}: {single_prompt[:50]}...")
+                upsampled_prompt = self._process_prompt_upsampler(
+                    single_prompt, single_video_path, os.path.join(save_folder, f"video_{i}")
+                )
+                upsampled_prompts.append(upsampled_prompt)
+                log.info(f"Upsampled prompt {i+1}: {upsampled_prompt[:50]}...")
+            self._pop_torchrun_environ_variables()
+            prompts = upsampled_prompts
+
+        # Run guardrail on all prompts
+        log.info("Running guardrail checks on all prompts")
+        safe_indices = []
+        for i, single_prompt in enumerate(prompts):
+            is_safe = self._run_guardrail_on_prompt_with_offload(single_prompt)
+            if is_safe:
+                safe_indices.append(i)
+            else:
+                log.critical(f"Input text prompt {i+1} is not safe")
+        
+        if not safe_indices:
+            log.critical("All prompts failed safety checks")
             return None
-        log.info("Pass guardrail on prompt")
-
-        log.info("Run text embedding on prompt")
-        if negative_prompt:
-            prompts = [prompt, negative_prompt]
-        else:
-            prompts = [prompt]
-        prompt_embeddings, _ = self._run_text_embedding_on_prompt_with_offload(prompts)
-        prompt_embedding = prompt_embeddings[0]
-        negative_prompt_embedding = prompt_embeddings[1] if negative_prompt else None
+        
+        # Filter to only safe prompts
+        safe_prompts = [prompts[i] for i in safe_indices]
+        safe_video_paths = [video_paths[i] for i in safe_indices]
+        safe_control_inputs = [control_inputs_list[i] for i in safe_indices]
+        
+        # Run text embedding on all prompts
+        log.info("Running text embedding on all prompts")
+        all_prompt_embeddings = []
+        
+        # Process in smaller batches if needed to avoid OOM
+        embedding_batch_size = min(batch_size, 8)  # Process embeddings in smaller batches
+        for i in range(0, len(safe_prompts), embedding_batch_size):
+            batch_prompts = safe_prompts[i:i+embedding_batch_size]
+            if negative_prompt:
+                batch_prompts_with_neg = []
+                for p in batch_prompts:
+                    batch_prompts_with_neg.extend([p, negative_prompt])
+            else:
+                batch_prompts_with_neg = batch_prompts
+            
+            prompt_embeddings, _ = self._run_text_embedding_on_prompt_with_offload(batch_prompts_with_neg)
+            
+            # Separate positive and negative embeddings
+            if negative_prompt:
+                for j in range(0, len(prompt_embeddings), 2):
+                    all_prompt_embeddings.append((prompt_embeddings[j], prompt_embeddings[j+1]))
+            else:
+                for emb in prompt_embeddings:
+                    all_prompt_embeddings.append((emb, None))
         log.info("Finish text embedding on prompt")
 
-        # Generate video
-        log.info("Run generation")
-        video = self._run_model_with_offload(
-            prompt_embedding,
-            negative_prompt_embedding=negative_prompt_embedding,
-            video_path=video_path,
-            control_inputs=control_inputs,
+        # Generate videos in batches to manage memory
+        log.info("Running batch generation")
+        inference_batch_size = min(batch_size, 4)  # Adjust based on GPU memory
+        
+        all_neg_embeddings = [emb[1] for emb in all_prompt_embeddings]
+        all_prompt_embeddings = [emb[0] for emb in all_prompt_embeddings]
+
+        videos = self._run_model_with_offload_batch(
+            prompt_embeddings=all_prompt_embeddings,
+            negative_prompt_embeddings=all_neg_embeddings,
+            video_paths=safe_video_paths,
+            control_inputs_list=safe_control_inputs,
         )
-        log.info("Finish generation")
+        for i, video in enumerate(videos):
+            safe_video = self._run_guardrail_on_video_with_offload(video)
+            if safe_video is not None:
+                all_videos.append(safe_video)
+                all_final_prompts.append(safe_prompts[i])
+            else:
+                log.critical(f"Generated video {i+1} is not safe")
 
-        log.info("Run guardrail on generated video")
-        video = self._run_guardrail_on_video_with_offload(video)
-        if video is None:
-            log.critical("Generated video is not safe")
-            raise ValueError("Guardrail check failed: Generated video is unsafe")
+        if not all_videos:
+            log.critical("All generated videos failed safety checks")
+            return None
+        return all_videos, all_final_prompts
 
-        log.info("Pass guardrail on generated video")
+        # # Upsample prompt if enabled
+        # if self.prompt_upsampler:
+        #     if int(os.environ["RANK"]) == 0:
+        #         self._push_torchrun_environ_variables()
+        #         prompt = self._process_prompt_upsampler(prompt, video_path, save_folder)
+        #         self._pop_torchrun_environ_variables()
+        #         log.info(f"Upsampled prompt: {prompt}")
 
-        return video, prompt
+        # log.info("Run guardrail on prompt")
+        # is_safe = self._run_guardrail_on_prompt_with_offload(prompt)
+        # if not is_safe:
+        #     log.critical("Input text prompt is not safe")
+        #     return None
+        # log.info("Pass guardrail on prompt")
+
+        # log.info("Run text embedding on prompt")
+        # if negative_prompt:
+        #     prompts = [prompt, negative_prompt]
+        # else:
+        #     prompts = [prompt]
+        # prompt_embeddings, _ = self._run_text_embedding_on_prompt_with_offload(prompts)
+        # prompt_embedding = prompt_embeddings[0]
+        # negative_prompt_embedding = prompt_embeddings[1] if negative_prompt else None
+        # log.info("Finish text embedding on prompt")
+
+        # # Generate video
+        # log.info("Run generation")
+        # video = self._run_model_with_offload(
+        #     prompt_embedding,
+        #     negative_prompt_embedding=negative_prompt_embedding,
+        #     video_path=video_path,
+        #     control_inputs=control_inputs,
+        # )
+        # log.info("Finish generation")
+
+        # log.info("Run guardrail on generated video")
+        # video = self._run_guardrail_on_video_with_offload(video)
+        # if video is None:
+        #     log.critical("Generated video is not safe")
+        #     raise ValueError("Guardrail check failed: Generated video is unsafe")
+
+        # log.info("Pass guardrail on generated video")
+
+        # return video, prompt

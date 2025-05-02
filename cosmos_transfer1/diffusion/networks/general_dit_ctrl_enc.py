@@ -92,10 +92,12 @@ class GeneralDITEncoder(GeneralDIT):
             padding_mask = transforms.functional.resize(
                 padding_mask, list(x_B_C_T_H_W.shape[-2:]), interpolation=transforms.InterpolationMode.NEAREST
             )
-            x_B_C_T_H_W = torch.cat(
-                [x_B_C_T_H_W, padding_mask.unsqueeze(1).repeat(x_B_C_T_H_W.shape[0], 1, x_B_C_T_H_W.shape[2], 1, 1)],
-                dim=1,
-            )
+            padding_mask = padding_mask.unsqueeze(2).expand(-1, -1, x_B_C_T_H_W.size(2), -1, -1)
+            x_B_C_T_H_W = torch.cat([x_B_C_T_H_W, padding_mask], dim=1)  # [B, C+1, T, H, W]
+            # x_B_C_T_H_W = torch.cat(
+            #     [x_B_C_T_H_W, padding_mask.unsqueeze(1).repeat(x_B_C_T_H_W.shape[0], 1, x_B_C_T_H_W.shape[2], 1, 1)],
+            #     dim=1,
+            # )
 
         x_B_T_H_W_D = self.x_embedder2(x_B_C_T_H_W)
 
@@ -178,6 +180,7 @@ class GeneralDITEncoder(GeneralDIT):
         if hasattr(self, "hint_encoders"):  # for multicontrol
             guided_hints = []
             for i in range(hint.shape[1]):
+                # i = hint.shape[1] % len(self.hint_encoders)
                 self.input_hint_block = self.hint_encoders[i].input_hint_block
                 self.pos_embedder = self.hint_encoders[i].pos_embedder
                 self.x_embedder2 = self.hint_encoders[i].x_embedder2

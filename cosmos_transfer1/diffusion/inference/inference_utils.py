@@ -365,6 +365,117 @@ def read_and_resize_input(input_control_path, num_total_frames, interpolation):
     control_input = torch.from_numpy(control_input[0])  # CTHW, range [0, 255]
     return control_input, fps, aspect_ratio
 
+def get_batched_ctrl_batch(
+    model,
+    prompt_embeddings,              # [B, ...]
+    negative_prompt_embeddings,     # [B, ...] or None
+    height,
+    width,
+    fps,
+    num_video_frames,
+    input_video_paths,              # List[str], length B
+    control_inputs_list,            # List[dict], length B
+    blur_strength,
+    canny_threshold,
+):
+    """
+    Create a fully batched data_batch for video generation, including all control and video inputs.
+
+    Args:
+        model: The diffusion model instance.
+        prompt_embeddings: [B, ...] tensor of prompt embeddings.
+        negative_prompt_embeddings: [B, ...] tensor of negative prompt embeddings or None.
+        height, width, fps, num_video_frames: Video parameters.
+        input_video_paths: List of input video paths, length B.
+        control_inputs_list: List of control input dicts, length B.
+        blur_strength, canny_threshold: ControlNet augmentation parameters.
+
+    Returns:
+        data_batch: Dict with all fields batched along dim 0 (batch dimension).
+        state_shape: List describing the latent state shape.
+    """
+    B = len(input_video_paths)
+
+    def prepare_single_data_batch(b):
+        data_batch = {
+            "video": torch.zeros((1, 3, num_video_frames, height, width), dtype=torch.uint8).cuda(),
+            "t5_text_mask": torch.ones(1, 512, dtype=torch.bfloat16).cuda(),
+            "image_size": torch.tensor([[height, width, height, width]], dtype=torch.bfloat16).cuda(),
+            "fps": torch.tensor([fps], dtype=torch.bfloat16).cuda(),
+            "num_frames": torch.tensor([num_video_frames], dtype=torch.bfloat16).cuda(),
+            "padding_mask": torch.zeros((1, 1, height, width), dtype=torch.bfloat16).cuda(),
+            "t5_text_embeddings": prompt_embeddings[b:b+1].to(dtype=torch.bfloat16).cuda(),
+        }
+        if negative_prompt_embeddings is not None:
+            data_batch["neg_t5_text_embeddings"] = negative_prompt_embeddings[b:b+1].to(dtype=torch.bfloat16).cuda()
+            data_batch["neg_t5_text_mask"] = torch.ones(1, 512, dtype=torch.bfloat16).cuda()
+        return data_batch
+
+    # Prepare and process each sample
+    single_batches = []
+    for b in range(B):
+        single_data_batch = prepare_single_data_batch(b)
+        processed = get_ctrl_batch(
+            model,
+            single_data_batch,
+            num_video_frames,
+            input_video_paths[b],
+            control_inputs_list[b],
+            blur_strength,
+            canny_threshold,
+        )
+        single_batches.append(processed)
+
+    # Merge all single-sample batches into a batched data_batch
+    batched_data_batch = {}
+    for k in single_batches[0]:
+        # if isinstance(single_batches[0][k], str):
+        #     batched_data_batch[k] = single_batches[0][k]
+
+        if isinstance(single_batches[0][k], torch.Tensor):
+            # if k == "control_weight":
+            #     # Check if spatial-temporal (6D) or scalar (1D or 2D)
+            #     if single_batches[0][k].ndim == 6:
+            #         # [num_controls, 1, 1, T, H, W] per sample
+            #         # Stack along dim=1 to get [num_controls, B, 1, T, H, W]
+            #         batched_data_batch[k] = torch.cat([d[k] for d in single_batches], dim=1)
+            #     elif single_batches[0][k].ndim == 1:
+            #         # [num_controls] per sample, stack along new batch dim
+            #         batched_data_batch[k] = torch.stack([d[k] for d in single_batches], dim=1)  # [num_controls, B]
+            #     elif single_batches[0][k].ndim == 2:
+            #         # [num_controls, 1] per sample, stack along batch
+            #         batched_data_batch[k] = torch.cat([d[k] for d in single_batches], dim=1)  # [num_controls, B]
+            #     else:
+            #         raise ValueError(f"Unsupported control_weight dimension: {single_batches[0][k].shape}")
+            # else:
+            #     # Concatenate along batch dimension (dim=0) for other tensors
+            #     batched_data_batch[k] = torch.cat([d[k] for d in single_batches], dim=0)
+
+            batched_data_batch[k] = torch.cat([d[k] for d in single_batches], dim=0)
+        else:
+            batched_data_batch[k] = single_batches[0][k] # assume they're the same for now
+
+    # Compute state_shape using the model and video parameters
+    state_shape = [
+        model.tokenizer.channel,
+        model.tokenizer.get_latent_num_frames(num_video_frames),
+        height // model.tokenizer.spatial_compression_factor,
+        width // model.tokenizer.spatial_compression_factor,
+    ]
+
+    def pretty_print_dict(d, indent=0):
+        for key, value in d.items():
+            prefix = ' ' * indent
+            if isinstance(value, dict):
+                print(f"{prefix}{key}: (dict)")
+                pretty_print_dict(value, indent + 4)
+            elif isinstance(value, torch.Tensor):
+                print(f"{prefix}{key}: (Tensor) shape={tuple(value.shape)}, dtype={value.dtype}")
+            else:
+                print(f"{prefix}{key}: ({type(value).__name__}) {value}")
+    # pretty_print_dict(batched_data_batch)
+    return batched_data_batch, state_shape
+
 
 def get_ctrl_batch(
     model, data_batch, num_video_frames, input_video_path, control_inputs, blur_strength, canny_threshold
@@ -464,6 +575,8 @@ def get_ctrl_batch(
     data_batch["target_h"], data_batch["target_w"] = target_h // 8, target_w // 8
     data_batch["video"] = torch.zeros((1, 3, 121, H, W), dtype=torch.uint8).cuda()
     data_batch["image_size"] = torch.tensor([[H, W, H, W]] * 1, dtype=torch.bfloat16).cuda()
+    # num_controls = len(control_inputs)
+    # data_batch["padding_mask"] = torch.zeros((1, num_controls, H, W), dtype=torch.bfloat16).cuda()
     data_batch["padding_mask"] = torch.zeros((1, 1, H, W), dtype=torch.bfloat16).cuda()
 
     return data_batch
@@ -488,6 +601,8 @@ def generate_control_input(input_file_path, save_folder, hint_key, blur_strength
     log.info(f"Saving control input to {output_file_path}")
     save_video(frames=control_input, fps=24, filepath=output_file_path)
     return output_file_path
+
+
 
 
 def generate_world_from_control(
@@ -693,7 +808,7 @@ def create_condition_latent_from_input_frames(
     padding_frames = condition_frames.new_zeros(B, C, num_frames_encode - num_frames_condition, H, W)
     encode_input_frames = torch.cat([condition_frames, padding_frames], dim=2)
 
-    log.debug(
+    print(
         f"create latent with input shape {encode_input_frames.shape} including padding {num_frames_encode - num_frames_condition} at the end"
     )
     latent = model.encode(encode_input_frames)
@@ -885,7 +1000,6 @@ def split_video_into_patches(tensor, patch_h, patch_w):
             patches += [tensor[:, :, :, p_h * i : (p_h * i + patch_h), p_w * j : (p_w * j + patch_w)]]
     return torch.cat(patches)
 
-
 def merge_patches_into_video(imgs, overlap_size_h, overlap_size_w, n_img_h, n_img_w):
     b, c, t, h, w = imgs.shape
     imgs = rearrange(imgs, "(b m n) c t h w -> m n b c t h w", m=n_img_h, n=n_img_w)
@@ -913,7 +1027,6 @@ def merge_patches_into_video(imgs, overlap_size_h, overlap_size_w, n_img_h, n_im
             )
             mask_sum[h_start : h_start + h, w_start : w_start + w] += mask_ij
     return img_sum / (mask_sum[None, None, None, :, :] + 1e-6)
-
 
 valid_hint_keys = {"vis", "seg", "edge", "depth", "keypoint", "upscale", "hdmap", "lidar"}
 
