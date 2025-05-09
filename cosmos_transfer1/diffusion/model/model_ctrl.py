@@ -152,8 +152,6 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
                 if not cond_mask.any():  # make sure at least one condition is present
                     cond_mask = [True] * num_conditions
             elif not cond_mask:  # during inference, use hint_mask to indicate which conditions are used
-                # cond_mask = self.config.hint_mask * num_conditions
-                # cond_mask = [True] * num_conditions
                 cond_mask = self.config.hint_mask
         else:
             cond_mask = [True] * num_conditions

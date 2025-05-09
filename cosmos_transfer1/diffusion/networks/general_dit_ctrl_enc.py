@@ -176,7 +176,6 @@ class GeneralDITEncoder(GeneralDIT):
         if hasattr(self, "hint_encoders"):  # for multicontrol
             guided_hints = []
             for i in range(hint.shape[1]):
-                # i = hint.shape[1] % len(self.hint_encoders)
                 self.input_hint_block = self.hint_encoders[i].input_hint_block
                 self.pos_embedder = self.hint_encoders[i].pos_embedder
                 self.x_embedder2 = self.hint_encoders[i].x_embedder2
