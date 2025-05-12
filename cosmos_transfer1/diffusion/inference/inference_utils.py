@@ -394,6 +394,7 @@ def get_ctrl_batch(
         _, num_total_frames, H, W = input_frames.shape
         control_input_dict["video"] = input_frames.numpy()  # CTHW
         data_batch["input_video"] = input_frames.bfloat16()[None] / 255 * 2 - 1  # BCTHW
+        control_input_dict["aspect_ratio"] = data_batch["aspect_ratio"] = aspect_ratio
     else:
         data_batch["input_video"] = None
     target_w, target_h = W, H
