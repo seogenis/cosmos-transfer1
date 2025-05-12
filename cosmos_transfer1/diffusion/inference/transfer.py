@@ -249,10 +249,26 @@ def demo(cfg, control_inputs):
         batch_prompt_texts = [p.get("prompt", None) for p in batch_prompts]
         batch_video_paths = [p.get("visual_input", None) for p in batch_prompts]
 
+<<<<<<< HEAD
         batch_control_inputs = []
         for i, input_dict in enumerate(batch_prompts):
             current_prompt = input_dict.get("prompt", None)
             current_video_path = input_dict.get("visual_input", None)
+=======
+        video_save_subfolder = os.path.join(cfg.video_save_folder, f"video_{i}")
+        os.makedirs(video_save_subfolder, exist_ok=True)
+        current_control_inputs = copy.deepcopy(control_inputs)
+
+        if "control_overrides" in input_dict:
+            for hint_key, override in input_dict["control_overrides"].items():
+                if hint_key in current_control_inputs:
+                    current_control_inputs[hint_key].update(override)
+                else:
+                    log.warning(f"Ignoring unknown control key in override: {hint_key}")
+
+        # if control inputs are not provided, run respective preprocessor (for seg and depth)
+        preprocessors(current_video_path, current_prompt, current_control_inputs, video_save_subfolder)
+>>>>>>> origin/main
 
             if cfg.batch_input_path:
                 video_save_subfolder = os.path.join(cfg.video_save_folder, f"video_{batch_start+i}")
@@ -279,7 +295,7 @@ def demo(cfg, control_inputs):
             video_path=batch_video_paths,
             negative_prompt=cfg.negative_prompt,
             control_inputs=batch_control_inputs,
-            save_folder=cfg.video_save_folder,
+            save_folder=video_save_subfolder,
             batch_size=actual_batch_size,
         )
         if batch_outputs is None:

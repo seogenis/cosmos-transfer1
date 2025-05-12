@@ -16,7 +16,7 @@ Please refer to the Inference section of [INSTALL.md](/INSTALL.md#inference) for
 huggingface-cli login
 ```
 
-3. Accept the [LlamaGuard-7b terms](https://huggingface.co/meta-llama/LlamaGuard-7b)
+3. Accept the [Llama-Guard-3-8B terms](https://huggingface.co/meta-llama/Llama-Guard-3-8B)
 
 4. Download the Cosmos model weights from [Hugging Face](https://huggingface.co/collections/nvidia/cosmos-transfer1-67c9d328196453be6e568d3e):
 
@@ -31,12 +31,6 @@ Note that this will require about 300GB of free storage. Not all these checkpoin
 ```
 checkpoints/
 ├── nvidia
-│   │
-│   ├── Aegis-AI-Content-Safety-LlamaGuard-Defensive-1.0
-│   │   ├── README.md
-│   │   ├── adapter_config.json
-│   │   ├── adapter_model.safetensors
-│   │   └── models--nvidia--Aegis-AI-Content-Safety-LlamaGuard-Defensive-1.0/...
 │   │
 │   ├── Cosmos-Guardrail1
 │   │   ├── README.md
@@ -105,7 +99,7 @@ CUDA_HOME=$CONDA_PREFIX PYTHONPATH=$(pwd) torchrun --nproc_per_node=$NUM_GPU --n
 
 Cosmos-Transfer1 supports a variety of configurations. You can pass your configuration in a JSON file via the argument `--controlnet_specs`. Let's go over a few examples:
 
-#### Example 1: single control
+### Example 1: single control (Edge)
 
 The following `controlnet_specs` only activates the edge controlnet.
 
@@ -149,7 +143,6 @@ This launches `transfer.py` and configures the controlnets for inference accordi
 }
 ```
 
-#### The input and output videos
 The input video is a low-resolution 640 × 480 video.
 
 <video src="https://github.com/user-attachments/assets/e63b9e9c-fee1-4105-a480-bb525bde1115">
@@ -191,8 +184,7 @@ Here is the generated video using the upsampled prompt.
   Your browser does not support the video tag.
 </video>
 
-
-### Examples 2: multimodal control
+### Example 2: multimodal control
 
 The following `controlnet_specs` activates vis, edge, depth, seg controls at the same time and apply uniform spatial weights.
 
@@ -254,7 +246,7 @@ The output video can be found at `assets/example1_uniform_weights.mp4`.
 - For `depth` and `seg`, if the `input_control` is not provided, we will run DepthAnything2 and GroundingDino+SAM2 on `input_video_path` to generate the corresponding `input_control`. Please see `assets/inference_cosmos_transfer1_uniform_weights_auto.json` as an example.
 - For `seg`, `input_control_prompt` can be provided to customize the prompt sent to GroundingDino. We can use ` . ` to separate objects in the `input_control_prompt`, e.g. `robotic arms . woman . cup`, as suggested by [GroundingDino](https://github.com/IDEA-Research/GroundingDINO?tab=readme-ov-file#arrow_forward-demo). If `input_control_prompt` is not provided, `prompt` will be used by default. Please see `assets/inference_cosmos_transfer1_uniform_weights_auto.json` as an example.
 
-### Examples 3: multimodal control with spatiotemporal control map
+### Example 3: multimodal control with spatiotemporal control map
 
 The following `controlnet_specs` activates vis, edge, depth, seg controls at the same time and apply spatiotemporal weights.
 
@@ -316,11 +308,13 @@ In effect, for the configuration given in `assets/inference_cosmos_transfer1_spa
 
 
 #### Example 4: batch generation
-This example runs inference on a batch of prompts, provided through the `--batch_input_path` argument (path to a JSONL file). This enables running multiple generations with different prompts based on the same controlnet configurations.
-Each line in the JSONL file must contain a `visual_input` field equivalent to the `--input_video_path` argument in the case of single control generation. It can also contain the a `prompt` field:
+This example runs inference on a batch of prompts, provided through the `--batch_input_path` argument (path to a JSONL file). This enables running multiple generations with different prompts (and per-video control input customization) based on the same controlnet configurations.
+Each line in the JSONL file must contain a `visual_input` field equivalent to the `--input_video_path` argument in the case of single control generation. It can also contain the `prompt` field. The batch system supports automatic control input generation, manual override of specific controls per video, and mixed usage of automatic and manual controls in the same batch. By default, the `input_control` specified within the controlnet spec json will be used for all samples in the batch, and are overridden if explicitly specified in the batch input json file (either with another `input_control` path or with `null` to indicate automatic generation based on the visual input).
+Here is an example of the Batch Input JSONL Format
 ```json
-{"visual_input": "path/to/video1.mp4"}
-{"visual_input": "path/to/video2.mp4"}
+{"visual_input": "path/to/video0.mp4", "prompt": "A detailed description..."}
+{"visual_input": "path/to/video1.mp4", "prompt": "A detailed description...",   "control_overrides": {"seg": {"input_control": "path/to/video1_seg.mp4"}, "depth": {"input_control": null}}}
+{"visual_input": "path/to/video2.mp4", "prompt": "A detailed description...",   "control_overrides": {"seg": {"input_control": "path/to/video2_seg.mp4"}, "depth": {"input_control": "path/to/video2_depth.mp4"}}}
 ```
 Inference command (with 9 input frames):
 ```bash
