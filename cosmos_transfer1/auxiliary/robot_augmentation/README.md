@@ -101,14 +101,12 @@ cosmos_transfer1/diffusion/inference/transfer.py \
 
 Input video:
 
-<video width="640" height="480" controls>
-  <source src="../../assets/robot_augmentation_example/example1/input_video.mp4" type="video/mp4">
+<video src="https://github.com/user-attachments/assets/9c2df99d-7d0c-4dcf-af87-4ec9f65328ed">
   Your browser does not support the video tag.
 </video>
 
 You can run multiple times with different prompts (e.g., `assets/robot_augmentation_example/example1/example1_prompts.json`), and you can get different augmentation results:
 
-<video width="640" height="480" controls>
-  <source src="../../assets/robot_augmentation_example/example1/robot_augmentation_result.mp4" type="video/mp4">
+<video src="https://github.com/user-attachments/assets/6dee15f5-9d8b-469a-a92a-3419cb466d44">
   Your browser does not support the video tag.
 </video>
