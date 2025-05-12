@@ -240,6 +240,7 @@ def demo(cfg, control_inputs):
         prompts = [{"prompt": cfg.prompt, "visual_input": cfg.input_video_path}]
 
     batch_size = cfg.batch_size if hasattr(cfg, "batch_size") else 1
+    os.makedirs(cfg.video_save_folder, exist_ok=True)
     for batch_start in range(0, len(prompts), batch_size):
         # Get current batch
         batch_prompts = prompts[batch_start : batch_start + batch_size]
@@ -296,6 +297,7 @@ def demo(cfg, control_inputs):
                 prompt_save_path = os.path.join(cfg.video_save_folder, f"{cfg.video_save_name}.txt")
             # Save video and prompt
             if device_rank == 0:
+                os.makedirs(os.path.dirname(video_save_path), exist_ok=True)
                 save_video(
                     video=video,
                     fps=cfg.fps,
