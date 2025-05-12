@@ -11,6 +11,14 @@ import glob
 import re
 from collections import defaultdict
 import argparse
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Class to manage different weight settings
 class WeightSettings:
@@ -28,14 +36,14 @@ class WeightSettings:
         """
         settings = {
             # Default setting: Emphasize robot in all features
-            'setting1': {
+            'fg_vis_edge_bg_seg': {
                 'depth': {'foreground': 0.0, 'background': 0.0},
                 'vis': {'foreground': 1.0, 'background': 0.0},
                 'edge': {'foreground': 1.0, 'background': 0.0},
                 'seg': {'foreground': 0.0, 'background': 1.0}
             },
 
-            'setting2': {
+            'fg_edge_bg_seg': {
                 'depth': {'foreground': 0.0, 'background': 0.0},
                 'vis': {'foreground': 0.0, 'background': 0.0},
                 'edge': {'foreground': 1.0, 'background': 0.0},
@@ -44,8 +52,8 @@ class WeightSettings:
         }
         
         if setting_name not in settings:
-            print(f"Warning: Setting '{setting_name}' not found. Using default.")
-            return settings['setting1']
+            logger.warning(f"Setting '{setting_name}' not found. Using default.")
+            return settings['fg_vis_edge_bg_seg']
         
         return settings[setting_name]
     
@@ -57,7 +65,7 @@ class WeightSettings:
             list: List of setting names
         """
         return [
-            'setting1', 'setting2'
+            'fg_vis_edge_bg_seg', 'fg_edge_bg_seg'
         ]
 
 def get_video_info(video_path):
@@ -91,37 +99,6 @@ def parse_color_key(color_key):
     else:
         raise ValueError(f"Invalid color key format: {color_key}")
 
-def find_nearest_color(pixel_rgb, color_mapping):
-    """Find the nearest color in the mapping based on Euclidean distance in RGB space
-    
-    Args:
-        pixel_rgb (tuple): RGB tuple of the pixel
-        color_mapping (dict): Mapping of RGB tuples to values
-        
-    Returns:
-        tuple: The nearest RGB color in the mapping
-    """
-    if not color_mapping:
-        return None
-    
-    # If the exact color is in the mapping, return it
-    if pixel_rgb in color_mapping:
-        return pixel_rgb
-    
-    # Find the nearest color based on Euclidean distance
-    min_distance = float('inf')
-    nearest_color = None
-    
-    for color in color_mapping:
-        # Calculate Euclidean distance in RGB space
-        distance = sum((a - b) ** 2 for a, b in zip(pixel_rgb, color))
-        
-        if distance < min_distance:
-            min_distance = distance
-            nearest_color = color
-    
-    return nearest_color
-
 def save_visualization(mask, frame_num, feature_name, viz_dir):
     """Save a visualization of the binary mask
     
@@ -134,20 +111,9 @@ def save_visualization(mask, frame_num, feature_name, viz_dir):
     # Simply save the binary mask directly
     output_path = os.path.join(viz_dir, f"{feature_name}_frame_{frame_num:06d}.png")
     cv2.imwrite(output_path, mask)
-    print(f"Saved binary visualization to {output_path}")
+    logger.info(f"Saved binary visualization to {output_path}")
 
-def list_examples():
-    """List all example directories in the robot_augmentation_example directory"""
-    input_dir = "/project/cosmos/yunhaog/code/github/cosmos-transfer1/cosmos-transfer1/assets/robot_augmentation_example"
-    
-    if not os.path.exists(input_dir):
-        print(f"Example root directory not found: {input_dir}")
-        return []
-    
-    examples = [d for d in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, d))]
-    return sorted(examples)
-
-def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path=None, weights_dict=None, setting_name='setting1', robot_keywords=None):
+def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path=None, weights_dict=None, setting_name='fg_vis_edge_bg_seg', robot_keywords=None):
     """Process all segmentation JSON files and create weight matrices
     
     Args:
@@ -163,7 +129,7 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
                 'seg': {'foreground': float, 'background': float}
             }
             Values should be in range 0-1. Defaults to None.
-        setting_name (str, optional): Weight setting name. Defaults to 'setting1'.
+        setting_name (str, optional): Weight setting name. Defaults to 'fg_vis_edge_bg_seg (setting1)'.
         robot_keywords (list, optional): List of keywords to identify robot classes. Defaults to ["robot"].
     """
     
@@ -173,7 +139,7 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
     
     # Get all JSON files
     json_files = sorted(glob.glob(os.path.join(segmentation_dir, "*.json")))
-    print(f"Found {len(json_files)} JSON files")
+    logger.info(f"Found {len(json_files)} JSON files")
     
     if len(json_files) == 0:
         raise ValueError(f"No JSON files found in {segmentation_dir}")
@@ -183,10 +149,10 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
     png_files = []
     if os.path.exists(png_dir):
         png_files = sorted(glob.glob(os.path.join(png_dir, "*.png")))
-        print(f"Found {len(png_files)} PNG files in segmentation directory")
+        logger.info(f"Found {len(png_files)} PNG files in segmentation directory")
     
     # Step 1: Create a unified color-to-class mapping from all JSON files
-    print("Creating unified color-to-class mapping...")
+    logger.info("Creating unified color-to-class mapping...")
     rgb_to_class = {}
     rgb_to_is_robot = {}
     
@@ -204,9 +170,9 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
     
     # Print statistics about the unified color mapping
     robot_colors = [color for color, is_robot in rgb_to_is_robot.items() if is_robot]
-    print(f"Unified mapping: Found {len(robot_colors)} robot colors out of {len(rgb_to_is_robot)} total colors")
+    logger.info(f"Unified mapping: Found {len(robot_colors)} robot colors out of {len(rgb_to_is_robot)} total colors")
     if robot_colors:
-        print(f"Robot classes: {[rgb_to_class[color] for color in robot_colors]}")
+        logger.info(f"Robot classes: {[rgb_to_class[color] for color in robot_colors]}")
     
     # Convert color mapping to arrays for vectorized operations
     colors = list(rgb_to_is_robot.keys())
@@ -229,7 +195,7 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
         
         # Find common frames between JSON and PNG files
         common_frames = sorted(set(json_frame_nums).intersection(set(png_frame_nums)))
-        print(f"Found {len(common_frames)} common frames between JSON and PNG files")
+        logger.info(f"Found {len(common_frames)} common frames between JSON and PNG files")
         
         if len(common_frames) == 0:
             raise ValueError("No matching frames found between JSON and PNG files")
@@ -243,19 +209,19 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
         png_files = [png_map[frame] for frame in common_frames if frame in png_map]
         num_frames = len(json_files)
         
-        print(f"Using PNG dimensions: {width}x{height}, processing {num_frames} frames")
+        logger.info(f"Using PNG dimensions: {width}x{height}, processing {num_frames} frames")
     else:
         # Get video information if no PNG files available
         try:
             width, height, frame_count, fps = get_video_info(video_path)
-            print(f"Video dimensions: {width}x{height}, {frame_count} frames, {fps} fps")
+            logger.info(f"Video dimensions: {width}x{height}, {frame_count} frames, {fps} fps")
             num_frames = min(len(json_files), frame_count)
         except Exception as e:
-            print(f"Warning: Could not get video information: {e}")
+            logger.warning(f"Warning: Could not get video information: {e}")
             # Use a default size if we can't get the video info
             width, height = 640, 480
             num_frames = len(json_files)
-            print(f"Using default dimensions: {width}x{height}, {num_frames} frames")
+            logger.info(f"Using default dimensions: {width}x{height}, {num_frames} frames")
     
     # Initialize weight tensors
     depth_weights = torch.zeros((num_frames, height, width))
@@ -274,7 +240,7 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
             frame = cv2.imread(png_file)
             
             if frame is None:
-                print(f"Warning: Could not read frame {i} from PNG. Using blank frame.")
+                logger.warning(f"Warning: Could not read frame {i} from PNG. Using blank frame.")
                 frame = np.zeros((height, width, 3), dtype=np.uint8)
             
             # Convert frame to RGB
@@ -328,8 +294,8 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
             # Log statistics
             robot_percentage = (robot_pixel_count / total_pixels) * 100
             matched_percentage = (matched_pixel_count / total_pixels) * 100
-            print(f"Frame {frame_num}: {robot_pixel_count} robot pixels ({robot_percentage:.2f}%)")
-            print(f"Frame {frame_num}: {matched_pixel_count} matched pixels ({matched_percentage:.2f}%)")
+            logger.info(f"Frame {frame_num}: {robot_pixel_count} robot pixels ({robot_percentage:.2f}%)")
+            logger.info(f"Frame {frame_num}: {matched_pixel_count} matched pixels ({matched_percentage:.2f}%)")
             
             # Save visualizations for this frame
             save_visualization(visualization_mask, frame_num, "segmentation", viz_dir)
@@ -357,7 +323,7 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
                 ret, frame = cap.read()
                 
                 if not ret:
-                    print(f"Warning: Could not read frame {i} from video. Using blank frame.")
+                    logger.warning(f"Warning: Could not read frame {i} from video. Using blank frame.")
                     frame = np.zeros((height, width, 3), dtype=np.uint8)
                 
                 # Convert frame to RGB
@@ -390,8 +356,8 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
                 # Log statistics
                 robot_percentage = (robot_pixel_count / total_pixels) * 100
                 matched_percentage = (matched_pixel_count / total_pixels) * 100
-                print(f"Frame {frame_num}: {robot_pixel_count} robot pixels ({robot_percentage:.2f}%)")
-                print(f"Frame {frame_num}: {matched_pixel_count} matched pixels ({matched_percentage:.2f}%)")
+                logger.info(f"Frame {frame_num}: {robot_pixel_count} robot pixels ({robot_percentage:.2f}%)")
+                logger.info(f"Frame {frame_num}: {matched_pixel_count} matched pixels ({matched_percentage:.2f}%)")
                 
                 # Save visualizations for this frame
                 save_visualization(visualization_mask, frame_num, "segmentation", viz_dir)
@@ -405,8 +371,8 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
             # Close the video capture
             cap.release()
         except Exception as e:
-            print(f"Warning: Error processing video: {e}")
-            print("Cannot process this example without proper frame data.")
+            logger.warning(f"Warning: Error processing video: {e}")
+            logger.warning("Cannot process this example without proper frame data.")
             raise ValueError(f"Cannot process example without frame data: {e}")
             
     # Save weight tensors
@@ -422,24 +388,24 @@ def process_segmentation_files(segmentation_dir, output_dir, viz_dir, video_path
     torch.save(edge_weights_half, os.path.join(output_dir, "edge_weights.pt"))
     torch.save(seg_weights_half, os.path.join(output_dir, "seg_weights.pt"))
     
-    print(f"Saved weight matrices to {output_dir}")
-    print(f"Weight matrix shape: {depth_weights_half.shape}, dtype: {depth_weights_half.dtype}")
-    print(f"Saved visualizations to {viz_dir}")
+    logger.info(f"Saved weight matrices to {output_dir}")
+    logger.info(f"Weight matrix shape: {depth_weights_half.shape}, dtype: {depth_weights_half.dtype}")
+    logger.info(f"Saved visualizations to {viz_dir}")
     
     return output_dir, viz_dir
 
-def process_all_examples(input_dir, output_dir, setting_name='setting1', robot_keywords=None):
+def process_all_examples(input_dir, output_dir, setting_name='fg_vis_edge_bg_seg', robot_keywords=None):
     """Process all example directories in the provided input directory
     
     Args:
         input_dir (str): Input directory containing example folders
         output_dir (str): Output directory for weight matrices
-        setting_name (str, optional): Weight setting name. Defaults to 'setting1'.
+        setting_name (str, optional): Weight setting name. Defaults to 'fg_vis_edge_bg_seg'.
         robot_keywords (list, optional): List of keywords to identify robot classes. Defaults to None.
     """
     # Find all example directories
     if not os.path.exists(input_dir):
-        print(f"Input directory not found: {input_dir}")
+        logger.error(f"Input directory not found: {input_dir}")
         return []
     
     # List example directories
@@ -447,13 +413,13 @@ def process_all_examples(input_dir, output_dir, setting_name='setting1', robot_k
     examples = sorted(examples)
     
     if not examples:
-        print("No example directories found.")
+        logger.warning("No example directories found.")
         return []
     
     # Print found examples
-    print(f"Found {len(examples)} example directories:")
+    logger.info(f"Found {len(examples)} example directories:")
     for example in examples:
-        print(f"  - {example}")
+        logger.info(f"  - {example}")
     
     # Store processing results
     results = []
@@ -461,31 +427,31 @@ def process_all_examples(input_dir, output_dir, setting_name='setting1', robot_k
     # Process each example
     for example in examples:
         try:
-            print(f"\nProcessing {example}...")
+            logger.info(f"\nProcessing {example}...")
             
             # Process this example with custom directories
             out_dir, viz_dir = process_example_with_dirs(example, input_dir, output_dir, setting_name, robot_keywords)
             results.append((example, out_dir, viz_dir))
             
-            print(f"Results for {example} saved to:")
-            print(f"  Weight matrices: {out_dir}")
-            print(f"  Visualizations: {viz_dir}")
+            logger.info(f"Results for {example} saved to:")
+            logger.info(f"  Weight matrices: {out_dir}")
+            logger.info(f"  Visualizations: {viz_dir}")
             
         except Exception as e:
-            print(f"Error processing {example}: {e}")
+            logger.error(f"Error processing {example}: {e}")
     
-    print("\nAll examples processed.")
+    logger.info("\nAll examples processed.")
     return results
 
 # Process a specific example with custom input and output directories
-def process_example_with_dirs(example_name, input_dir, output_dir, setting_name='setting1', robot_keywords=None):
+def process_example_with_dirs(example_name, input_dir, output_dir, setting_name='fg_vis_edge_bg_seg', robot_keywords=None):
     """Process a specific example with custom input and output directories
     
     Args:
         example_name (str): Name of the example directory
         input_dir (str): Path to input directory containing example folders
         output_dir (str): Path to output directory for weight matrices
-        setting_name (str, optional): Weight setting name. Defaults to 'setting1'.
+        setting_name (str, optional): Weight setting name. Defaults to 'fg_vis_edge_bg_seg'.
         robot_keywords (list, optional): List of keywords to identify robot classes. Defaults to None.
     """
     # Create paths for this example
@@ -500,7 +466,7 @@ def process_example_with_dirs(example_name, input_dir, output_dir, setting_name=
     # Check if weight files already exist
     depth_weights_path = os.path.join(example_output_dir, "depth_weights.pt")
     if os.path.exists(depth_weights_path):
-        print(f"Weight files already exist for {example_name}, skipping processing")
+        logger.info(f"Weight files already exist for {example_name}, skipping processing")
         return example_output_dir, viz_dir
     
     # Create output directories if they don't exist
@@ -524,9 +490,9 @@ def process_example_with_dirs(example_name, input_dir, output_dir, setting_name=
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Process segmentation files to generate spatial-temporal weight matrices')
-    parser.add_argument('--setting', type=str, default='setting1', 
+    parser.add_argument('--setting', type=str, default='fg_vis_edge_bg_seg',
                         choices=WeightSettings.list_settings(),
-                        help='Weight setting to use (default: setting1)')
+                        help='Weight setting to use (default: fg_vis_edge_bg_seg (setting1), fg_edge_bg_seg (setting2))')
     parser.add_argument('--input-dir', type=str, 
                         default='assets/robot_augmentation_example',
                         help='Input directory containing example folders')
@@ -536,7 +502,13 @@ if __name__ == "__main__":
     parser.add_argument('--robot-keywords', type=str, nargs='+',
                         default=["world_robot", "gripper", "robot"],
                         help='Keywords used to identify robot classes (default: world_robot gripper robot)')
+    parser.add_argument('--log-level', type=str, default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Set the logging level')
     args = parser.parse_args()
+    
+    # Set logging level from command line argument
+    logger.setLevel(getattr(logging, args.log_level))
     
     # Get directories from arguments
     input_dir = args.input_dir
@@ -544,10 +516,10 @@ if __name__ == "__main__":
     setting_name = args.setting
     robot_keywords = args.robot_keywords
     
-    print(f"Using input directory: {input_dir}")
-    print(f"Using output directory: {output_dir}")
-    print(f"Using weight setting: {setting_name}")
-    print(f"Using robot keywords: {robot_keywords}")
+    logger.info(f"Using input directory: {input_dir}")
+    logger.info(f"Using output directory: {output_dir}")
+    logger.info(f"Using weight setting: {setting_name}")
+    logger.info(f"Using robot keywords: {robot_keywords}")
     
     # Process all examples with the provided input and output directories
     process_all_examples(input_dir, output_dir, setting_name, robot_keywords)

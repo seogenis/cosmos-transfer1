@@ -6,7 +6,7 @@ This pipeline provides a two-step process to augment robotic videos using **Cosm
 
 We propose two augmentation settings:
 
-### Setting 1: Preserve Shape and Appearance of the Robot (foreground)
+### Setting 1 (fg_vis_edge_bg_seg): Preserve Shape and Appearance of the Robot (foreground)
 - **Foreground Controls**: `Edge`, `Vis`
 - **Background Controls**: `Segmentation`
 - **Weights**:
@@ -15,7 +15,7 @@ We propose two augmentation settings:
   - `w_seg(BG) = 1`
   - All other weights = 0
 
-### Setting 2: Preserve Only Shape of the Robot (foreground)
+### Setting 2 (fg_edge_bg_seg): Preserve Only Shape of the Robot (foreground)
 - **Foreground Controls**: `Edge`
 - **Background Controls**: `Segmentation`
 - **Weights**:
