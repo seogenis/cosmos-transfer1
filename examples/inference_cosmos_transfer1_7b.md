@@ -365,8 +365,7 @@ Note: we support various aspect ratios, including 1:1 (960x960 for height and wi
 
 [Robotics Augmentation Workflow](/cosmos_transfer1/auxiliary/robot_augmentation/README.md)
 
-<video width="640" height="480" controls>
-  <source src="../../assets/robot_augmentation_example/example1/robot_augmentation_result.mp4" type="video/mp4">
+<video src="https://github.com/user-attachments/assets/6dee15f5-9d8b-469a-a92a-3419cb466d44">
   Your browser does not support the video tag.
 </video>
 
