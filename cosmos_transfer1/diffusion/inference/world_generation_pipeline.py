@@ -597,8 +597,10 @@ class DiffusionControl2WorldGenerationPipeline(BaseWorldGenerationPipeline):
             upsampled_prompts = []
             for i, (single_prompt, single_video_path) in enumerate(zip(prompts, video_paths)):
                 log.info(f"Upsampling prompt {i+1}/{batch_size}: {single_prompt[:50]}...")
+                video_save_subfolder = os.path.join(save_folder, f"video_{i}")
+                os.makedirs(video_save_subfolder, exist_ok=True)
                 upsampled_prompt = self._process_prompt_upsampler(
-                    single_prompt, single_video_path, os.path.join(save_folder, f"video_{i}")
+                    single_prompt, single_video_path, video_save_subfolder
                 )
                 upsampled_prompts.append(upsampled_prompt)
                 log.info(f"Upsampled prompt {i+1}: {upsampled_prompt[:50]}...")
