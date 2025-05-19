@@ -54,7 +54,7 @@ Here is an example input format:
 
 ```bash
 PYTHONPATH=$(pwd) python cosmos_transfer1/auxiliary/robot_augmentation/spatial_temporal_weight.py \
-    --setting setting1 \
+    --setting fg_vis_edge_bg_seg \
     --robot-keywords world_robot gripper robot \
     --input-dir assets/robot_augmentation_example \
     --output-dir outputs/robot_augmentation_example
@@ -62,9 +62,9 @@ PYTHONPATH=$(pwd) python cosmos_transfer1/auxiliary/robot_augmentation/spatial_t
 
 #### Parameters:
 
-* `--setting`: Weight setting to use (choices: 'setting1', 'setting2', default: 'setting1')
-  * setting1: Emphasizes robot in visual and edge features (vis: 1.0 foreground, edge: 1.0 foreground, seg: 1.0 background)
-  * setting2: Emphasizes robot only in edge features (edge: 1.0 foreground, seg: 1.0 background)
+* `--setting`: Weight setting to use (choices: 'fg_vis_edge_bg_seg', 'fg_edge_bg_seg', default: 'fg_vis_edge_bg_seg')
+  * fg_vis_edge_bg_seg (setting1): Emphasizes robot in visual and edge features (vis: 1.0 foreground, edge: 1.0 foreground, seg: 1.0 background)
+  * fg_edge_bg_seg (setting2): Emphasizes robot only in edge features (edge: 1.0 foreground, seg: 1.0 background)
 
 * `--input-dir`: Input directory containing example folders
   * Default: 'assets/robot_augmentation_example'

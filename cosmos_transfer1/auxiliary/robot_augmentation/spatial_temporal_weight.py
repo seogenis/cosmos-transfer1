@@ -49,13 +49,14 @@ class WeightSettings:
             dict: Dictionary with weights for each feature
         """
         settings = {
-            # Default setting: Emphasize robot in all features
+            # Default setting (setting1): Emphasize foreground in edge and visual features
             "fg_vis_edge_bg_seg": {
                 "depth": {"foreground": 0.0, "background": 0.0},
                 "vis": {"foreground": 1.0, "background": 0.0},
                 "edge": {"foreground": 1.0, "background": 0.0},
                 "seg": {"foreground": 0.0, "background": 1.0},
             },
+            # Setting2: Emphasize foreground in edge feature
             "fg_edge_bg_seg": {
                 "depth": {"foreground": 0.0, "background": 0.0},
                 "vis": {"foreground": 0.0, "background": 0.0},
