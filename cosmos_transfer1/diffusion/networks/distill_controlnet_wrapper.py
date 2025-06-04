@@ -16,8 +16,8 @@
 import torch
 from torch.distributed import ProcessGroup
 
-from cosmos_transfer1.utils.lazy_config import instantiate as lazy_instantiate
 from cosmos_transfer1.diffusion.module.blocks import DITBuildingBlock
+from cosmos_transfer1.utils.lazy_config import instantiate as lazy_instantiate
 
 
 class DistillControlNet(torch.nn.Module):
