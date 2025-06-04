@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-
-from torch import Tensor
 from typing import Any, Dict, List, Set, Tuple
+
+import torch
+from torch import Tensor
+
 from cosmos_transfer1.diffusion.conditioner import BaseVideoCondition, CosmosCondition
 from cosmos_transfer1.diffusion.diffusion.functional.batch_ops import batch_mul
 from cosmos_transfer1.diffusion.diffusion.modules.denoiser_scaling import EDMScaling
@@ -25,17 +26,20 @@ from cosmos_transfer1.diffusion.diffusion.types import DenoisePrediction
 from cosmos_transfer1.diffusion.module import parallel
 from cosmos_transfer1.diffusion.module.blocks import FourierFeatures
 from cosmos_transfer1.diffusion.module.pretrained_vae import BaseVAE
+from cosmos_transfer1.diffusion.networks.general_dit import GeneralDIT
 from cosmos_transfer1.utils import log, misc
 from cosmos_transfer1.utils.lazy_config import instantiate as lazy_instantiate
-from cosmos_transfer1.diffusion.networks.general_dit import GeneralDIT
+
 # from cosmos_transfer1.diffusion.training.models.model import _broadcast
 IS_PREPROCESSED_KEY = "is_preprocessed"
 from enum import Enum
+
 
 class DataType(Enum):
     IMAGE = "image"
     VIDEO = "video"
     MIX = "mix"
+
 
 class EDMSDE:
     def __init__(
@@ -223,6 +227,7 @@ def robust_broadcast(tensor: torch.Tensor, src: int, pg, is_check_shape: bool = 
 
     return tensor
 
+
 def _broadcast(item: torch.Tensor | str | None, to_tp: bool = True, to_cp: bool = True) -> torch.Tensor | str | None:
     """
     Broadcast the item from the minimum rank in the specified group(s).
@@ -270,7 +275,7 @@ class DistillT2WModel(DiffusionT2WModel):
 
     def __init__(self, config):
         super().__init__(config)
-    
+
     def get_data_and_condition(self, data_batch: dict[str, Tensor]) -> Tuple[Tensor, CosmosCondition]:
         self._normalize_video_databatch_inplace(data_batch)
         self._augment_image_dim_inplace(data_batch)
@@ -362,6 +367,7 @@ class DistillT2WModel(DiffusionT2WModel):
             else:
                 data_batch[input_key] = rearrange(data_batch[input_key], "b c h w -> b c 1 h w").contiguous()
                 data_batch[IS_PREPROCESSED_KEY] = True
+
 
 def broadcast_condition(condition: BaseVideoCondition, to_tp: bool = True, to_cp: bool = True) -> BaseVideoCondition:
     condition_kwargs = {}

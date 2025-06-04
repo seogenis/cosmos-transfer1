@@ -13,21 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Dict, Optional, Tuple, TypeVar, Union, Any, List, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar, Union
 
 import torch
 from einops import rearrange
 from megatron.core import parallel_state
 from torch import Tensor
 
-from cosmos_transfer1.diffusion.conditioner import VideoConditionerWithCtrl, VideoExtendCondition, BaseVideoCondition
+from cosmos_transfer1.diffusion.conditioner import BaseVideoCondition, VideoConditionerWithCtrl, VideoExtendCondition
 from cosmos_transfer1.diffusion.inference.inference_utils import merge_patches_into_video, split_video_into_patches
 from cosmos_transfer1.diffusion.model.model_t2w import DiffusionT2WModel, broadcast_condition
 from cosmos_transfer1.diffusion.model.model_v2w import DiffusionV2WModel, DistillV2WModel
 from cosmos_transfer1.diffusion.module.parallel import broadcast, cat_outputs_cp, split_inputs_cp
+from cosmos_transfer1.diffusion.networks.distill_controlnet_wrapper import DistillControlNet
 from cosmos_transfer1.utils import log, misc
 from cosmos_transfer1.utils.lazy_config import instantiate as lazy_instantiate
-from cosmos_transfer1.diffusion.networks.distill_controlnet_wrapper import DistillControlNet
 
 T = TypeVar("T")
 IS_PREPROCESSED_KEY = "is_preprocessed"
@@ -679,7 +679,6 @@ class VideoDiffusionT2VModelWithCtrl(DiffusionT2WModel):
 
 
 class VideoDistillModelWithCtrl(DistillV2WModel):
-
     def build_model(self) -> torch.nn.ModuleDict:
         log.info("Start creating base model")
         base_model = super().build_model()
@@ -808,7 +807,7 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
         **kwargs,
     ) -> torch.Tensor:
         """Single-step generation matching internal distilled model"""
-        
+
         # Same preprocessing as base class
         self._normalize_video_databatch_inplace(data_batch)
         self._augment_image_dim_inplace(data_batch)
@@ -901,13 +900,11 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
                 setattr(condition, "region_masks", region_masks)
                 setattr(uncondition, "region_masks", region_masks)
 
-
         # not sure if this is consistent w the new distilled model?
         setattr(condition, "base_model", self.model.base_model)
         setattr(uncondition, "base_model", self.model.base_model)
         if hasattr(self, "hint_encoders"):
             self.model.net.hint_encoders = self.hint_encoders
-
 
         cp_enabled = self.net.is_context_parallel_enabled
         if cp_enabled:
@@ -915,7 +912,7 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
 
         condition.gt_latent = condition_latent
         uncondition.gt_latent = condition_latent
-            
+
         if self.net.is_context_parallel_enabled:
             x_sigma_max = broadcast(x_sigma_max, to_tp=False, to_cp=True)
             x_sigma_max = split_inputs_cp(x=x_sigma_max, seq_dim=2, cp_group=self.net.cp_group)
@@ -971,10 +968,10 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
         if n_img_h > 1:
             overlap_size_h = (n_img_h * patch_h - h) // (n_img_h - 1)
             assert n_img_h * patch_h - overlap_size_h * (n_img_h - 1) == h
-        
+
         # Single denoising step at sigma_max
         sigma_max = torch.tensor(self.sde.sigma_max).repeat(epsilon.size(0)).to(epsilon.device)
-        
+
         # Direct network forward pass - no iterative sampling
         with torch.no_grad():
             cond_x0 = self.denoise(

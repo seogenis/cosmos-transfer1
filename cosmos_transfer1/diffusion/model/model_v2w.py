@@ -14,7 +14,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple, Union, Any, List, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import torch
 from megatron.core import parallel_state
@@ -23,7 +23,7 @@ from torch import Tensor
 from cosmos_transfer1.diffusion.conditioner import VideoExtendCondition
 from cosmos_transfer1.diffusion.config.base.conditioner import VideoCondBoolConfig
 from cosmos_transfer1.diffusion.diffusion.functional.batch_ops import batch_mul
-from cosmos_transfer1.diffusion.model.model_t2w import DiffusionT2WModel, DistillT2WModel, DataType
+from cosmos_transfer1.diffusion.model.model_t2w import DataType, DiffusionT2WModel, DistillT2WModel
 from cosmos_transfer1.diffusion.module.parallel import cat_outputs_cp, split_inputs_cp
 from cosmos_transfer1.utils import log, misc
 
@@ -358,9 +358,10 @@ class DiffusionV2WModel(DiffusionT2WModel):
 
         return condition
 
+
 class DistillV2WModel(DistillT2WModel):
     """ControlNet LVG Video Distillation Model (distilling Video2World ControlNet diffusion models)."""
-    
+
     def augment_conditional_latent_frames(
         self,
         condition: VideoExtendCondition,
@@ -419,7 +420,6 @@ class DistillV2WModel(DistillT2WModel):
                 condition.condition_video_augment_sigma = c_noise_augment
             else:  # no condition frames
                 condition.condition_video_augment_sigma = torch.zeros_like(c_noise_augment)
-
 
         # Multiply the whole latent with c_in_augment
         augment_latent_cin = batch_mul(augment_latent, c_in_augment)
@@ -502,7 +502,6 @@ class DistillV2WModel(DistillT2WModel):
         if not condition.video_cond_bool:
             # Unconditional case, drop out the condition region
             augment_latent = self.drop_out_condition_region(augment_latent, xt, cfg_video_cond_bool)
-
 
         # Compose the model input with condition region (augment_latent) and generation region (noise_x)
         new_noise_xt = condition_video_indicator * augment_latent + (1 - condition_video_indicator) * noise_x

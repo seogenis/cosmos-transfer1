@@ -29,6 +29,7 @@ from cosmos_transfer1.checkpoints import (
     COSMOS_TOKENIZER_CHECKPOINT,
     DEPTH2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
     EDGE2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
+    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH,
     HDMAP2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
     KEYPOINT2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
     LIDAR2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
@@ -41,7 +42,6 @@ from cosmos_transfer1.checkpoints import (
     SV2MV_t2w_LIDAR2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
     SV2MV_v2w_HDMAP2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
     SV2MV_v2w_LIDAR2WORLD_CONTROLNET_7B_CHECKPOINT_PATH,
-    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH
 )
 from cosmos_transfer1.diffusion.inference.inference_utils import (
     detect_aspect_ratio,
@@ -65,7 +65,11 @@ from cosmos_transfer1.diffusion.inference.inference_utils import (
     split_video_into_patches,
     valid_hint_keys,
 )
-from cosmos_transfer1.diffusion.model.model_ctrl import VideoDiffusionModelWithCtrl, VideoDiffusionT2VModelWithCtrl, VideoDistillModelWithCtrl
+from cosmos_transfer1.diffusion.model.model_ctrl import (
+    VideoDiffusionModelWithCtrl,
+    VideoDiffusionT2VModelWithCtrl,
+    VideoDistillModelWithCtrl,
+)
 from cosmos_transfer1.diffusion.model.model_multi_camera_ctrl import MultiVideoDiffusionModelWithCtrl
 from cosmos_transfer1.diffusion.module.parallel import broadcast
 from cosmos_transfer1.utils import log
@@ -87,7 +91,7 @@ MODEL_NAME_DICT = {
     BASE_v2w_7B_SV2MV_CHECKPOINT_AV_SAMPLE_PATH: "CTRL_7Bv1pt3_sv2mv_v2w_57frames_control_input_hdmap_block3",
     SV2MV_t2w_HDMAP2WORLD_CONTROLNET_7B_CHECKPOINT_PATH: "CTRL_7Bv1pt3_sv2mv_t2w_57frames_control_input_hdmap_block3",
     SV2MV_t2w_LIDAR2WORLD_CONTROLNET_7B_CHECKPOINT_PATH: "CTRL_7Bv1pt3_sv2mv_t2w_57frames_control_input_lidar_block3",
-    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH: "dev_v2w_ctrl_7bv1pt3_VisControlCanny_video_only_dmd2_fsdp"
+    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH: "dev_v2w_ctrl_7bv1pt3_VisControlCanny_video_only_dmd2_fsdp",
 }
 MODEL_CLASS_DICT = {
     BASE_7B_CHECKPOINT_PATH: VideoDiffusionModelWithCtrl,
@@ -106,7 +110,7 @@ MODEL_CLASS_DICT = {
     BASE_v2w_7B_SV2MV_CHECKPOINT_AV_SAMPLE_PATH: MultiVideoDiffusionModelWithCtrl,
     SV2MV_v2w_HDMAP2WORLD_CONTROLNET_7B_CHECKPOINT_PATH: MultiVideoDiffusionModelWithCtrl,
     SV2MV_v2w_LIDAR2WORLD_CONTROLNET_7B_CHECKPOINT_PATH: MultiVideoDiffusionModelWithCtrl,
-    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH: VideoDistillModelWithCtrl
+    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH: VideoDistillModelWithCtrl,
 }
 
 from collections import defaultdict
@@ -1204,27 +1208,28 @@ class DistilledControl2WorldGenerationPipeline(DiffusionControl2WorldGenerationP
 
     def _load_network(self):
         log.info("Loading distilled consolidated checkpoint")
-        
+
         # Load consolidated checkpoint
         from cosmos_transfer1.diffusion.inference.inference_utils import skip_init_linear
+
         with skip_init_linear():
             self.model.set_up_model()
         checkpoint_path = f"{self.checkpoint_dir}/{self.checkpoint_name}"
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         state_dict = checkpoint.get("model", checkpoint)
-        
+
         # Split into base and control components
         base_state_dict = {}
         ctrl_state_dict = {}
 
         for k, v in state_dict.items():
             if k.startswith("net.base_model.net."):
-                base_key = k[len("net.base_model.net."):]
+                base_key = k[len("net.base_model.net.") :]
                 base_state_dict[base_key] = v
             elif k.startswith("net.net_ctrl."):
-                ctrl_key = k[len("net.net_ctrl."):]
+                ctrl_key = k[len("net.net_ctrl.") :]
                 ctrl_state_dict[ctrl_key] = v
-    
+
         # Load base model weights
         if base_state_dict:
             self.model.model["net"].base_model.net.load_state_dict(base_state_dict, strict=False)
@@ -1237,7 +1242,7 @@ class DistilledControl2WorldGenerationPipeline(DiffusionControl2WorldGenerationP
         if self.process_group is not None:
             log.info("Enabling CP in base model")
             self.model.model.net.enable_context_parallel(self.process_group)
-            
+
     def _run_model(
         self,
         prompt_embeddings: torch.Tensor,  # [B, ...]
@@ -1331,11 +1336,11 @@ class DistilledControl2WorldGenerationPipeline(DiffusionControl2WorldGenerationP
 
         prev_frames = None
         if input_video is not None:
-            prev_frames =  torch.zeros_like(input_video).cuda()
-            prev_frames[:, :, :self.num_input_frames] = (input_video[:, :, :self.num_input_frames] + 1) * 255.0 / 2
+            prev_frames = torch.zeros_like(input_video).cuda()
+            prev_frames[:, :, : self.num_input_frames] = (input_video[:, :, : self.num_input_frames] + 1) * 255.0 / 2
         log.info(f"N_clip: {N_clip}")
         for i_clip in tqdm(range(N_clip)):
-            log.info(f"input_video shape: {input_video.shape}" )
+            log.info(f"input_video shape: {input_video.shape}")
             # data_batch_i = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in data_batch.items()}
             data_batch_i = {k: v for k, v in data_batch.items()}
             start_frame = num_new_generated_frames * i_clip
@@ -1404,7 +1409,7 @@ class DistilledControl2WorldGenerationPipeline(DiffusionControl2WorldGenerationP
             if i_clip == 0:
                 video.append(frames)
             else:
-                video.append(frames[:, :, self.num_input_frames:])
+                video.append(frames[:, :, self.num_input_frames :])
 
             prev_frames = torch.zeros_like(frames)
             prev_frames[:, :, : self.num_input_frames] = frames[:, :, -self.num_input_frames :]

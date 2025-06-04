@@ -17,12 +17,16 @@ from hydra.core.config_store import ConfigStore
 
 from cosmos_transfer1.checkpoints import (
     BASE_7B_CHECKPOINT_AV_SAMPLE_PATH,
+    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH,
     BASE_t2w_7B_SV2MV_CHECKPOINT_AV_SAMPLE_PATH,
     BASE_v2w_7B_SV2MV_CHECKPOINT_AV_SAMPLE_PATH,
-    EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH
 )
 from cosmos_transfer1.diffusion.config.transfer.conditioner import CTRL_HINT_KEYS_COMB
-from cosmos_transfer1.diffusion.model.model_ctrl import VideoDiffusionModelWithCtrl, VideoDiffusionT2VModelWithCtrl, VideoDistillModelWithCtrl
+from cosmos_transfer1.diffusion.model.model_ctrl import (
+    VideoDiffusionModelWithCtrl,
+    VideoDiffusionT2VModelWithCtrl,
+    VideoDistillModelWithCtrl,
+)
 from cosmos_transfer1.diffusion.model.model_multi_camera_ctrl import MultiVideoDiffusionModelWithCtrl
 from cosmos_transfer1.diffusion.networks.general_dit_multi_view import MultiViewVideoExtendGeneralDIT
 from cosmos_transfer1.diffusion.networks.general_dit_video_conditioned import VideoExtendGeneralDIT
@@ -249,7 +253,7 @@ def make_ctrlnet_config_7b_distilled(
                 {"override /net": "faditv2_7b"},
                 {"override /net_ctrl": "faditv2_7b"},
                 {"override /conditioner": "ctrlnet_add_fps_image_size_padding_mask"},
-                # {"override /discriminator": f"conv3d_pool_faditv2_7b"}, # added this 
+                # {"override /discriminator": f"conv3d_pool_faditv2_7b"}, # added this
                 "_self_",
             ],
             job=dict(
@@ -257,7 +261,6 @@ def make_ctrlnet_config_7b_distilled(
                 name="dev_v2w_ctrl_7bv1pt3_VisControlCanny_video_only_dmd2_fsdp",  # Exact target experiment name
                 project="cosmos_nano_v1",
             ),
-
             model=dict(
                 # Core distilled parameters from old DMD2CtrlModelConfig
                 base_load_from=dict(
@@ -302,11 +305,9 @@ def make_ctrlnet_config_7b_distilled(
         )
     )
 
+
 # Register the specific distilled configuration
-distilled_config = make_ctrlnet_config_7b_distilled(
-    hint_key="control_input_edge",
-    num_control_blocks=3
-)
+distilled_config = make_ctrlnet_config_7b_distilled(hint_key="control_input_edge", num_control_blocks=3)
 cs.store(
     group="experiment",
     package="_global_",
