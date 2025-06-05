@@ -1242,11 +1242,14 @@ def validate_controlnet_specs(cfg, controlnet_specs) -> Dict[str, Any]:
 
         if "ckpt_path" not in config:
             log.info(f"No checkpoint path specified for {hint_key}. Using default.")
-            config["ckpt_path"] = (
-                os.path.join(checkpoint_dir, default_model_names[hint_key])
-                if not use_distilled
-                else os.path.join(checkpoint_dir, default_distilled_model_names[hint_key])
-            )
+            ckpt_path = os.path.join(checkpoint_dir, default_model_names[hint_key])
+            if use_distilled:
+                if hint_key in default_distilled_model_names:
+                    ckpt_path = os.path.join(checkpoint_dir, default_distilled_model_names[hint_key])
+                else:
+                    log.info(f"No default distilled checkpoint for {hint_key}. Using full checkpoint")
+
+            config["ckpt_path"] = ckpt_path
             log.info(f"Using default checkpoint path: {config['ckpt_path']}")
 
         # Regardless whether "control_weight_prompt" is provided (i.e. whether we automatically
