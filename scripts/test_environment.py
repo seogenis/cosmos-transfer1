@@ -55,14 +55,7 @@ if "CONDA_PREFIX" not in os.environ:
 
 print("Attempting to import critical packages...")
 
-packages = [
-    "torch",
-    "torchvision",
-    "transformers",
-    "megatron.core",
-    "transformer_engine",
-    "vllm",
-]
+packages = ["torch", "torchvision", "transformers", "megatron.core", "transformer_engine", "vllm", "pandas"]
 packages_training = [
     "apex.multi_tensor_apply",
 ]
