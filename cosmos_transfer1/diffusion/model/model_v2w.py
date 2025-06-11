@@ -360,7 +360,7 @@ class DiffusionV2WModel(DiffusionT2WModel):
 
 
 class DistillV2WModel(DistillT2WModel):
-    """ControlNet LVG Video Distillation Model (distilling Video2World ControlNet diffusion models)."""
+    """ControlNet Video2World Distillation Model."""
 
     def augment_conditional_latent_frames(
         self,

@@ -219,10 +219,6 @@ def demo(cfg, control_inputs):
     if cfg.use_distilled:
         assert not cfg.is_av_sample
         checkpoint = EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH
-        if not hasattr(cfg, "num_steps") or cfg.num_steps == 35:
-            cfg.num_steps = 25
-        if not hasattr(cfg, "guidance") or cfg.guidance == 7.0:
-            cfg.guidance = 5.0
         pipeline = DistilledControl2WorldGenerationPipeline(
             checkpoint_dir=cfg.checkpoint_dir,
             checkpoint_name=checkpoint,

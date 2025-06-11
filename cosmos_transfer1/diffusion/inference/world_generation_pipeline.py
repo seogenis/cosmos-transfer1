@@ -1263,26 +1263,7 @@ class DistilledControl2WorldGenerationPipeline(DiffusionControl2WorldGenerationP
 
         log.info("Starting data augmentation")
 
-        # Process regional prompts if provided
-        log.info(f"regional_prompts passed to _run_model: {self.regional_prompts}")
-        log.info(f"region_definitions passed to _run_model: {self.region_definitions}")
-        regional_embeddings, _ = self._run_text_embedding_on_prompt_with_offload(self.regional_prompts)
-        regional_contexts = None
-        region_masks = None
-        if self.regional_prompts and self.region_definitions:
-            # Prepare regional prompts using the existing text embedding function
-            _, regional_contexts, region_masks = prepare_regional_prompts(
-                model=self.model,
-                global_prompt=prompt_embeddings,  # Pass the already computed global embedding
-                regional_prompts=regional_embeddings,
-                region_definitions=self.region_definitions,
-                batch_size=1,  # Adjust based on your batch size
-                time_dim=self.num_video_frames,
-                height=self.height // self.model.tokenizer.spatial_compression_factor,
-                width=self.width // self.model.tokenizer.spatial_compression_factor,
-                device=torch.device("cuda"),
-                compression_factor=self.model.tokenizer.spatial_compression_factor,
-            )
+        log.info(f"Regional prompts not supported when using distilled model, dropping: {self.regional_prompts}")
 
         # Get video batch and state shape
         data_batch, state_shape = get_batched_ctrl_batch(
@@ -1298,10 +1279,6 @@ class DistilledControl2WorldGenerationPipeline(DiffusionControl2WorldGenerationP
             blur_strength=self.blur_strength,
             canny_threshold=self.canny_threshold,
         )
-
-        if regional_contexts is not None:
-            data_batch["regional_contexts"] = regional_contexts
-            data_batch["region_masks"] = region_masks
 
         log.info("Completed data augmentation")
 

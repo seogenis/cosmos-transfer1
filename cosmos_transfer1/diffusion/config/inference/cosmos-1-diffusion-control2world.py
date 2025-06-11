@@ -242,7 +242,6 @@ def make_ctrlnet_config_7b_distilled(
     hint_key: str = "control_input_edge",
     num_control_blocks: int = 3,
 ) -> LazyDict:
-    """Configuration for distilled ControlNet inference - corresponds to old internal config_ctrl.py"""
     hint_mask = [True] * len(CTRL_HINT_KEYS_COMB[hint_key])
 
     return LazyDict(
@@ -253,16 +252,14 @@ def make_ctrlnet_config_7b_distilled(
                 {"override /net": "faditv2_7b"},
                 {"override /net_ctrl": "faditv2_7b"},
                 {"override /conditioner": "ctrlnet_add_fps_image_size_padding_mask"},
-                # {"override /discriminator": f"conv3d_pool_faditv2_7b"}, # added this
                 "_self_",
             ],
             job=dict(
                 group="DISTILL_CTRL_7Bv1",
-                name="dev_v2w_ctrl_7bv1pt3_VisControlCanny_video_only_dmd2_fsdp",  # Exact target experiment name
+                name=f"CTRL_7Bv1pt3_lvg_fsdp_distilled_121frames_{hint_key}_block{num_control_blocks}",
                 project="cosmos_nano_v1",
             ),
             model=dict(
-                # Core distilled parameters from old DMD2CtrlModelConfig
                 base_load_from=dict(
                     load_path=f"checkpoints/{EDGE2WORLD_CONTROLNET_DISTILLED_CHECKPOINT_PATH}",
                 ),

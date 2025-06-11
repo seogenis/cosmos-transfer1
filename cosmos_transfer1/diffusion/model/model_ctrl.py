@@ -683,7 +683,6 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
         log.info("Start creating base model")
         base_model = super().build_model()
         # initialize base model
-        # self.load_base_model(base_model)
         log.info("Done creating base model")
 
         log.info("Start creating ctrlnet model")
@@ -693,11 +692,6 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
         logvar = base_model.logvar
         # initialize controlnet encoder
         model = torch.nn.ModuleDict({"net": net, "conditioner": conditioner, "logvar": logvar})
-        # missing, unexpected = model.load_state_dict(base_model.state_dict(), strict=False)
-        # log.info(f"Ctrlnet Missing: {missing}")
-        # log.info(f"Ctrlnet Unexpected: {unexpected}")
-
-        # model.base_model = base_model["net"]
         model.base_model = net.base_model.net
 
         self.hint_key = self.config.hint_key["hint_key"]
@@ -867,15 +861,6 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
         else:
             setattr(uncondition, hint_key, latent_hint)
 
-        # Add extra conditions for ctrlnet.
-        # Handle regional prompting information
-        if "regional_contexts" in data_batch and "region_masks" in data_batch:
-            setattr(condition, "regional_contexts", data_batch["regional_contexts"])
-            setattr(condition, "region_masks", data_batch["region_masks"])
-            # For unconditioned generation, we still need the region masks but not the regional contexts
-            setattr(uncondition, "region_masks", data_batch["region_masks"])
-            setattr(uncondition, "regional_contexts", None)
-
         to_cp = self.net.is_context_parallel_enabled
         # For inference, check if parallel_state is initialized
         if parallel_state.is_initialized():
@@ -889,16 +874,6 @@ class VideoDistillModelWithCtrl(DistillV2WModel):
             setattr(condition, hint_key, latent_hint)
             if getattr(uncondition, hint_key) is not None:
                 setattr(uncondition, hint_key, latent_hint)
-            if hasattr(condition, "regional_contexts") and getattr(condition, "regional_contexts") is not None:
-                regional_contexts = getattr(condition, "regional_contexts")
-                regional_contexts = split_inputs_cp(regional_contexts, seq_dim=2, cp_group=cp_group)
-                setattr(condition, "regional_contexts", regional_contexts)
-
-            if hasattr(condition, "region_masks") and getattr(condition, "region_masks") is not None:
-                region_masks = getattr(condition, "region_masks")
-                region_masks = split_inputs_cp(region_masks, seq_dim=2, cp_group=cp_group)
-                setattr(condition, "region_masks", region_masks)
-                setattr(uncondition, "region_masks", region_masks)
 
         # not sure if this is consistent w the new distilled model?
         setattr(condition, "base_model", self.model.base_model)
