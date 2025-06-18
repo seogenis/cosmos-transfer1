@@ -230,7 +230,7 @@ class VideoDiffusionModelWithCtrl(DiffusionV2WModel):
                 condition_latent[:1], uncondition, num_condition_t
             )
         condition.video_cond_bool = True
-        uncondition.video_cond_bool = True  # Not do cfg on condition frames
+        uncondition.video_cond_bool = False  # Not do cfg on condition frames
 
         # Add extra conditions for ctrlnet.
         latent_hint = data_batch["latent_hint"]
