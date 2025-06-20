@@ -36,12 +36,10 @@ class DepthAnythingModel:
         print(f"Loading Depth Anything model - {DEPTH_ANYTHING_MODEL_CHECKPOINT}...")
         self.image_processor = AutoImageProcessor.from_pretrained(
             DEPTH_ANYTHING_MODEL_CHECKPOINT,
-            torch_dtype=torch.float16,
             trust_remote_code=True,
         )
         self.model = AutoModelForDepthEstimation.from_pretrained(
             DEPTH_ANYTHING_MODEL_CHECKPOINT,
-            torch_dtype=torch.float16,
             trust_remote_code=True,
         ).to(self.device)
 
