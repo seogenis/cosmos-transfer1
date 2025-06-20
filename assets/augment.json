@@ -1,0 +1,14 @@
+{
+  "vis": {
+    "control_weight": 0.25
+  },
+  "edge": {
+    "control_weight": 0.25
+  },
+  "depth": {
+    "control_weight": 0.25
+  },
+  "seg": {
+    "control_weight": 0.25
+  }
+}
